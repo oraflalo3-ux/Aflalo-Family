@@ -40,16 +40,95 @@ function normalizeUsername(raw) {
   return u.includes('@') ? u : `${u}@${getAuthDomain()}`;
 }
 
+function isValidSupabaseUrl(url) {
+  const u = (url || '').trim().replace(/\/$/, '');
+  return /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u);
+}
+
+function isValidSupabaseKey(key) {
+  const k = (key || '').trim();
+  return k.startsWith('eyJ') || k.startsWith('sb_publishable_');
+}
+
 function getSupabaseCredentials() {
   const cfg = window.APP_CONFIG;
   if (cfg?.supabaseUrl && cfg?.supabaseAnonKey) {
-    return { url: cfg.supabaseUrl.trim(), key: cfg.supabaseAnonKey.trim() };
+    const url = cfg.supabaseUrl.trim().replace(/\/$/, '');
+    const key = cfg.supabaseAnonKey.trim();
+    if (isValidSupabaseUrl(url) && isValidSupabaseKey(key)) return { url, key };
   }
-  const url = localStorage.getItem('sb_url');
-  const key = localStorage.getItem('sb_key');
-  if (url && key) return { url: url.trim(), key: key.trim() };
-  return null;
+  const url = (localStorage.getItem('sb_url') || '').trim().replace(/\/$/, '');
+  const key = (localStorage.getItem('sb_key') || '').trim();
+  if (!url || !key) return null;
+  if (!isValidSupabaseUrl(url) || !isValidSupabaseKey(key)) {
+    console.warn('Invalid stored Supabase config', { url, keyPrefix: key.slice(0, 12) });
+    return null;
+  }
+  return { url, key };
 }
+
+function showConfigError(msg) {
+  const el = document.getElementById('cfg-error');
+  if (!el) return;
+  if (msg) {
+    el.textContent = msg;
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+async function testSupabaseConnection(url, key) {
+  if (!isValidSupabaseUrl(url)) {
+    return { ok: false, msg: 'כתובת שגויה. דוגמה: https://abcdefgh.supabase.co' };
+  }
+  if (!isValidSupabaseKey(key)) {
+    return { ok: false, msg: 'מפתח שגוי. העתק Publishable (sb_publishable_...) או anon (eyJ...) מ-API Keys' };
+  }
+  const base = url.replace(/\/$/, '');
+  try {
+    const res = await fetch(`${base}/auth/v1/settings`, {
+      headers: { apikey: key, Authorization: `Bearer ${key}` }
+    });
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, msg: 'מפתח API נדחה. ודא שזה Publishable/anon — לא Secret key' };
+    }
+    if (!res.ok) {
+      return { ok: false, msg: `Supabase החזיר שגיאה ${res.status}. בדוק URL ומפתח` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, msg: 'אין גישה ל-Supabase מהדפדפן: ' + (e.message || 'שגיאת רשת') };
+  }
+}
+
+function fillConfigFormFromStorage() {
+  const u = document.getElementById('cfg-url');
+  const k = document.getElementById('cfg-key');
+  if (u) u.value = localStorage.getItem('sb_url') || '';
+  if (k) k.value = localStorage.getItem('sb_key') || '';
+}
+
+function resetStoredConfig() {
+  localStorage.removeItem('sb_url');
+  localStorage.removeItem('sb_key');
+  sessionStorage.removeItem(LOGOUT_FLAG);
+  clearSupabaseAuthStorage();
+  sb = null;
+  fillConfigFormFromStorage();
+  showConfigError('');
+  showConfig();
+  toast('הגדרות נמחקו — הזן URL ומפתח מחדש');
+}
+
+function openSupabaseSetup() {
+  sessionStorage.removeItem(LOGOUT_FLAG);
+  fillConfigFormFromStorage();
+  showConfigError('');
+  showConfig();
+}
+window.openSupabaseSetup = openSupabaseSetup;
+window.resetStoredConfig = resetStoredConfig;
 
 function showLogin(errMsg) {
   setAppScreen('login');
@@ -95,19 +174,45 @@ function setUserLabel(session) {
 
 // ── Auth ──────────────────────────────────────────────────
 async function doLogin() {
-  const email = normalizeUsername(gv('login-user'));
+  const rawUser = gv('login-user');
   const password = gv('login-pass');
-  if (!email || !password) return showLogin('הכנס שם משתמש וסיסמה');
+  if (!rawUser || !password) return showLogin('הכנס אימייל וסיסמה');
+  if (/^sb_|^eyJ/i.test(rawUser) || rawUser.includes('publishable')) {
+    return showLogin('זה מפתח API, לא אימייל. בשדה אימייל הקלד: oraflalo3@gmail.com');
+  }
+  const email = normalizeUsername(rawUser);
+  if (!email.includes('@')) return showLogin('הכנס אימייל מלא, למשל oraflalo3@gmail.com');
   if (!sb && !initSupabaseClient()) return showConfig();
 
   const errEl = document.getElementById('login-error');
   errEl.style.display = 'none';
 
+  const creds = getSupabaseCredentials();
+  if (creds) {
+    const conn = await testSupabaseConnection(creds.url, creds.key);
+    if (!conn.ok) {
+      showLogin(conn.msg + ' — לחץ "תקן הגדרות Supabase"');
+      return;
+    }
+  }
+
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) {
-    const msg = error.message.includes('Invalid login')
-      ? 'שם משתמש או סיסמה שגויים'
-      : (error.message.includes('Email not confirmed') ? 'אשר את המייל ב-Supabase' : 'שגיאת התחברות — נסה שוב');
+    console.error('login', error);
+    let msg = 'שגיאת התחברות — נסה שוב';
+    const m = (error.message || '').toLowerCase();
+    const c = error.code || '';
+    if (m.includes('invalid api') || error.status === 401) {
+      msg = 'מפתח Supabase שגוי או חסר. לחץ "תקן הגדרות Supabase" והדבק URL + Publishable key';
+    } else if (m.includes('invalid login') || m.includes('invalid credentials') || c === 'invalid_credentials') {
+      msg = `סיסמה שגויה, או אין משתמש ${email}. ב-Supabase → Users בדוק את המייל ואפס סיסמה`;
+    } else if (m.includes('email not confirmed') || c === 'email_not_confirmed') {
+      msg = 'המייל לא אושר — ב-Users ערוך משתמש → Auto Confirm';
+    } else if (m.includes('user not found')) {
+      msg = `אין משתמש ${email} — צור ב-Authentication → Users`;
+    } else {
+      msg = `${error.message || 'שגיאה'} (${c || error.status || '?'})`;
+    }
     showLogin(msg);
     return;
   }
@@ -153,8 +258,20 @@ window.doLogin = doLogin;
 // ── Config ────────────────────────────────────────────────
 async function boot() {
   if (!initSupabaseClient()) {
+    fillConfigFormFromStorage();
     showConfig();
     return;
+  }
+
+  const creds = getSupabaseCredentials();
+  if (creds) {
+    const conn = await testSupabaseConnection(creds.url, creds.key);
+    if (!conn.ok) {
+      fillConfigFormFromStorage();
+      showConfigError(conn.msg);
+      showConfig();
+      return;
+    }
   }
 
   sb.auth.onAuthStateChange((event, session) => {
@@ -180,14 +297,27 @@ async function boot() {
   await init();
 }
 
-function saveConfig() {
-  const url = document.getElementById('cfg-url').value.trim();
+async function saveConfig() {
+  const url = document.getElementById('cfg-url').value.trim().replace(/\/$/, '');
   const key = document.getElementById('cfg-key').value.trim();
-  if (!url || !key) return toast('הכנס URL ו-Key');
+  showConfigError('');
+  if (!url || !key) {
+    showConfigError('הכנס URL ומפתח Publishable');
+    return;
+  }
+  const conn = await testSupabaseConnection(url, key);
+  if (!conn.ok) {
+    showConfigError(conn.msg);
+    return;
+  }
   localStorage.setItem('sb_url', url);
   localStorage.setItem('sb_key', key);
-  boot();
+  toast('חיבור תקין ✓');
+  initSupabaseClient();
+  sessionStorage.removeItem(LOGOUT_FLAG);
+  showLogin();
 }
+window.saveConfig = saveConfig;
 
 // ── Init ─────────────────────────────────────────────────
 async function init() {
