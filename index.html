@@ -145,6 +145,7 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .cf-sec-title { font-size: 11px; font-weight: 600; color: var(--text2); margin: .65rem 0 .35rem; padding-top: .5rem; border-top: 0.5px solid var(--border); }
 .cf-sec-title:first-child { border-top: none; padding-top: 0; margin-top: 0; }
 .ov-summary-row .met.ov-hero .mv { font-size: 22px; }
+#ov-hero.hero-card,
 .hero-card {
   background: linear-gradient(135deg, var(--green-light) 0%, var(--bg2) 70%);
   border: 0.5px solid rgba(15,110,86,.2);
@@ -152,10 +153,15 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
   padding: 1rem 1.1rem 1.05rem;
   margin-bottom: .85rem;
 }
+#ov-hero .hero-label,
 .hero-card .hero-label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+#ov-hero .hero-value,
 .hero-card .hero-value { font-size: 28px; font-weight: 700; line-height: 1.15; letter-spacing: -.02em; }
+#ov-hero .hero-value.g,
 .hero-card .hero-value.g { color: var(--green); }
+#ov-hero .hero-value.r,
 .hero-card .hero-value.r { color: var(--red); }
+#ov-hero .hero-sub,
 .hero-card .hero-sub { font-size: 12px; color: var(--text2); margin-top: 6px; display: flex; flex-wrap: wrap; gap: .65rem; }
 .banner-shared {
   margin: 0 0 .85rem;
@@ -201,6 +207,20 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .cf-row-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .cf-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .cf-row-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cf-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -.25rem; }
+.cf-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 280px; }
+.cf-table th { text-align: right; padding: 8px 10px; font-size: 11px; font-weight: 600; color: var(--text2); border-bottom: 0.5px solid var(--border2); white-space: nowrap; }
+.cf-table td { padding: 9px 10px; border-bottom: 0.5px solid var(--border); vertical-align: middle; }
+.cf-table tbody tr:last-child td { border-bottom: none; }
+.cf-table tfoot td { font-weight: 700; background: var(--bg3); border-top: 0.5px solid var(--border2); padding: 10px; }
+.cf-table tfoot .cf-total-label { color: var(--text2); font-size: 12px; }
+.cf-t-name { font-weight: 500; min-width: 5rem; }
+.cf-t-amt { width: 6.25rem; }
+.cf-t-act { white-space: nowrap; text-align: left; }
+.cf-empty-cell { text-align: center; color: var(--text3); font-size: 12px; padding: 1.25rem !important; }
+.cf-table-card.income .card-title { color: var(--green); }
+.cf-table-card.expense .card-title { color: var(--red); }
+.cf-table-card .cf-inline-amt { width: 100%; max-width: 6.5rem; }
 .cf-tpl-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .75rem; }
 .cf-tpl { font-size: 11px !important; min-height: 32px !important; padding: 6px 10px !important; }
 .cf-inline-amt { width: 5.5rem; padding: 6px 8px; font-size: 14px; font-weight: 600; border: 0.5px solid var(--border2); border-radius: 6px; text-align: left; direction: ltr; background: var(--bg2); }
@@ -352,6 +372,7 @@ html.app-main #config-screen { display: none !important; }
     <div style="font-size:28px;margin-bottom:.5rem">🏠</div>
     <h2>משפחת אפללו</h2>
     <p>הכנס <strong>אימייל</strong> ו<strong>סיסמה</strong> — כמו ב-Supabase → Users. (לא מפתח API!)</p>
+    <p class="hint" style="margin-bottom:.75rem">אחרי כניסה ראשונה האפליקציה אמורה לזכור אותך — בלי URL ומפתח בכל פתיחה (אם הוגדר config.js ב-GitHub).</p>
     <div class="fg"><label>אימייל</label><input id="login-user" placeholder="oraflalo3@gmail.com" dir="ltr" autocomplete="username"></div>
     <div class="fg"><label>סיסמה</label><input id="login-pass" type="password" placeholder="הסיסמה מ-Add user" autocomplete="current-password"></div>
     <p class="hint" style="margin-bottom:.75rem">❌ אל תדביק כאן <span dir="ltr">sb_publishable</span> או <span dir="ltr">eyJ...</span> — אלה מפתחות API, לא שם משתמש.</p>
@@ -404,11 +425,11 @@ html.app-main #config-screen { display: none !important; }
 <main class="app-content" id="app-content">
 <div id="page-overview" class="page active">
   <p id="ov-shared-note" class="banner-shared"></p>
-  <div id="ov-hero"></div>
+  <div id="ov-hero" class="hero-card"></div>
   <div class="sec sec-flex"><span>לטפל עכשיו</span><span id="ov-urgent-count"></span></div>
   <div class="card" id="ov-alerts"></div>
   <div id="ov-quick" class="quick-actions"></div>
-  <div class="sec">סיכום החודש</div>
+  <div class="sec">פירוט הוצאות</div>
   <div id="ov-summary" class="mrow ov-summary-row"></div>
   <div class="sec" id="ov-cf-title">תזרים החודש</div>
   <div class="card" id="ov-cf"></div>
@@ -420,16 +441,48 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="page-finance" class="page">
   <div id="fin-summary" class="mrow"></div>
-  <div class="sec">תזרים</div>
-  <div class="card">
-    <div class="card-header"><span class="card-title">הכנסות / הוצאות</span>
+  <div id="cf-bar" class="card" style="margin-bottom:.85rem"></div>
+  <div class="sec">הכנסות</div>
+  <div class="card cf-table-card income">
+    <div class="card-header">
+      <span class="card-title">טבלת הכנסות</span>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button type="button" class="btn sm" onclick="om('cf','fixed')">+ קבועה</button>
-        <button type="button" class="btn sm" onclick="om('cf','variable')">+ משתנה</button>
+        <button type="button" class="btn sm" onclick="om('cf','income-fixed')">+ קבועה</button>
+        <button type="button" class="btn sm" onclick="om('cf','income-variable')">+ משתנה</button>
       </div>
     </div>
-    <div id="cf-bar"></div>
-    <div id="cf-list"></div>
+    <div class="cf-table-wrap">
+      <table class="cf-table">
+        <thead><tr><th>פריט</th><th>סוג</th><th>סכום</th><th></th></tr></thead>
+        <tbody id="cf-income-tbody"></tbody>
+        <tfoot><tr>
+          <td colspan="2" class="cf-total-label">סה״כ הכנסות</td>
+          <td class="g" id="cf-income-total">₪0</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>
+  </div>
+  <div class="sec">הוצאות</div>
+  <div class="card cf-table-card expense">
+    <div class="card-header">
+      <span class="card-title">טבלת הוצאות</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn sm" onclick="om('cf','expense-fixed')">+ קבועה</button>
+        <button type="button" class="btn sm" onclick="om('cf','expense-variable')">+ משתנה</button>
+      </div>
+    </div>
+    <div class="cf-table-wrap">
+      <table class="cf-table">
+        <thead><tr><th>פריט</th><th>סוג</th><th>סכום</th><th></th></tr></thead>
+        <tbody id="cf-expense-tbody"></tbody>
+        <tfoot><tr>
+          <td colspan="2" class="cf-total-label">סה״כ הוצאות</td>
+          <td class="r" id="cf-expense-total">₪0</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>
   </div>
   <div class="sec">יומן היסטוריה</div>
   <div class="card">
@@ -609,6 +662,8 @@ window.saveConfigGo = function () {
       err('מפתח שגוי — העתק Publishable או anon מ-API Keys');
       return;
     }
+    localStorage.setItem('bayit_sb_url', u);
+    localStorage.setItem('bayit_sb_key', k);
     localStorage.setItem('sb_url', u);
     localStorage.setItem('sb_key', k);
     try {
@@ -635,6 +690,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=27"></script>
+<script src="app.js?v=31"></script>
 </body>
 </html>

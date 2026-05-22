@@ -7,6 +7,9 @@ let cfHistoryYear = null;
 let modalType = '', modalTarget = null;
 let isLoggingOut = false;
 const LOGOUT_FLAG = 'bayit_logged_out';
+const LS_SB_URL = 'bayit_sb_url';
+const LS_SB_KEY = 'bayit_sb_key';
+const LS_LAST_USER = 'bayit_last_user';
 
 const DEFAULT_AUTH_DOMAIN = 'bayit.local';
 
@@ -99,10 +102,10 @@ function getSupabaseCredentials() {
     if (isValidSupabaseUrl(url) && isValidSupabaseKey(key)) return { url, key };
   }
   const url = normalizeSupabaseUrl(
-    localStorage.getItem('sb_url') || sessionStorage.getItem('sb_url') || ''
+    localStorage.getItem(LS_SB_URL) || localStorage.getItem('sb_url') || sessionStorage.getItem('sb_url') || ''
   );
   const key = sanitizeConfigValue(
-    localStorage.getItem('sb_key') || sessionStorage.getItem('sb_key') || ''
+    localStorage.getItem(LS_SB_KEY) || localStorage.getItem('sb_key') || sessionStorage.getItem('sb_key') || ''
   );
   if (!url || !key) return null;
   if (!isValidSupabaseUrl(url) || !isValidSupabaseKey(key)) {
@@ -159,6 +162,8 @@ async function testSupabaseConnection(url, key, timeoutMs) {
 function persistSupabaseConfig(url, key) {
   let stored = false;
   try {
+    localStorage.setItem(LS_SB_URL, url);
+    localStorage.setItem(LS_SB_KEY, key);
     localStorage.setItem('sb_url', url);
     localStorage.setItem('sb_key', key);
     stored = true;
@@ -168,7 +173,6 @@ function persistSupabaseConfig(url, key) {
   try {
     sessionStorage.setItem('sb_url', url);
     sessionStorage.setItem('sb_key', key);
-    stored = true;
   } catch (e) {
     console.warn('sessionStorage', e);
   }
@@ -181,7 +185,30 @@ function persistSupabaseConfig(url, key) {
     console.warn('initSupabaseClient', e);
   }
   updateConnectionBadge();
-  sessionStorage.removeItem(LOGOUT_FLAG);
+  clearLogoutFlag();
+}
+
+function clearLogoutFlag() {
+  try {
+    localStorage.removeItem(LOGOUT_FLAG);
+    sessionStorage.removeItem(LOGOUT_FLAG);
+  } catch (_) { /* ignore */ }
+}
+
+function getSupabaseAuthStorageKey(url) {
+  try {
+    const ref = new URL(url).hostname.split('.')[0];
+    return `bayit-auth-${ref}`;
+  } catch (_) {
+    return 'bayit-auth-session';
+  }
+}
+
+function prefetchLoginUser() {
+  const el = document.getElementById('login-user');
+  if (!el) return;
+  const saved = localStorage.getItem(LS_LAST_USER);
+  if (saved && !el.value) el.value = saved;
 }
 
 function setCfgStatus(msg) {
@@ -192,14 +219,20 @@ function setCfgStatus(msg) {
 function fillConfigFormFromStorage() {
   const u = document.getElementById('cfg-url');
   const k = document.getElementById('cfg-key');
-  if (u) u.value = localStorage.getItem('sb_url') || '';
-  if (k) k.value = localStorage.getItem('sb_key') || '';
+  const url = localStorage.getItem(LS_SB_URL) || localStorage.getItem('sb_url') || '';
+  const key = localStorage.getItem(LS_SB_KEY) || localStorage.getItem('sb_key') || '';
+  if (u) u.value = url;
+  if (k) k.value = key;
 }
 
 function resetStoredConfig() {
+  localStorage.removeItem(LS_SB_URL);
+  localStorage.removeItem(LS_SB_KEY);
   localStorage.removeItem('sb_url');
   localStorage.removeItem('sb_key');
-  sessionStorage.removeItem(LOGOUT_FLAG);
+  sessionStorage.removeItem('sb_url');
+  sessionStorage.removeItem('sb_key');
+  clearLogoutFlag();
   clearSupabaseAuthStorage();
   sb = null;
   fillConfigFormFromStorage();
@@ -209,7 +242,7 @@ function resetStoredConfig() {
 }
 
 function openSupabaseSetup() {
-  sessionStorage.removeItem(LOGOUT_FLAG);
+  clearLogoutFlag();
   fillConfigFormFromStorage();
   showConfigError('');
   showConfig();
@@ -219,6 +252,7 @@ window.resetStoredConfig = resetStoredConfig;
 
 function showLogin(errMsg) {
   setAppScreen('login');
+  prefetchLoginUser();
   const err = document.getElementById('login-error');
   if (errMsg) {
     err.textContent = errMsg;
@@ -256,7 +290,9 @@ function initSupabaseClient() {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: false
+      detectSessionInUrl: false,
+      storage: localStorage,
+      storageKey: getSupabaseAuthStorageKey(creds.url)
     }
   });
   return true;
@@ -418,16 +454,19 @@ async function doLogin() {
     return;
   }
   document.getElementById('login-pass').value = '';
-  sessionStorage.removeItem(LOGOUT_FLAG);
-  setUserLabel(data.session);
-  showMainApp();
-  await init();
+  clearLogoutFlag();
+  try {
+    localStorage.setItem(LS_LAST_USER, rawUser);
+  } catch (_) { /* ignore */ }
+  await enterApp(data.session);
 }
 
 async function doLogout(loginMsg) {
   if (isLoggingOut) return;
   isLoggingOut = true;
-  sessionStorage.setItem(LOGOUT_FLAG, '1');
+  try {
+    localStorage.setItem(LOGOUT_FLAG, '1');
+  } catch (_) { /* ignore */ }
   try {
     const userLabel = document.getElementById('user-label');
     if (userLabel) userLabel.textContent = '';
@@ -457,6 +496,42 @@ window.doLogout = doLogout;
 window.doLogin = doLogin;
 
 // ── Config ────────────────────────────────────────────────
+let authListenerAttached = false;
+
+async function enterApp(session) {
+  clearLogoutFlag();
+  setUserLabel(session);
+  updateConnectionBadge();
+  showMainApp();
+  await init();
+}
+
+function setupAuthListener() {
+  if (!sb || authListenerAttached) return;
+  authListenerAttached = true;
+  sb.auth.onAuthStateChange((event, session) => {
+    if (isLoggingOut) return;
+    if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
+    if (event === 'SIGNED_OUT' && !session) {
+      if (document.documentElement.classList.contains('app-main')) showLogin();
+    }
+  });
+}
+
+async function restoreSessionOnResume() {
+  if (!sb || isLoggingOut || localStorage.getItem(LOGOUT_FLAG) === '1') return;
+  if (!document.documentElement.classList.contains('app-main')) {
+    const { data: { session } } = await sb.auth.getSession();
+    if (session) await enterApp(session);
+    return;
+  }
+  try {
+    await sb.auth.getSession();
+  } catch (e) {
+    console.warn('resume session', e);
+  }
+}
+
 async function boot() {
   if (!initSupabaseClient()) {
     fillConfigFormFromStorage();
@@ -464,28 +539,31 @@ async function boot() {
     return;
   }
 
-  sb.auth.onAuthStateChange((event, session) => {
-    if (isLoggingOut) return;
-    if (event === 'SIGNED_OUT' || !session) {
-      const main = document.getElementById('main-app');
-      if (main && main.style.display !== 'none') showLogin();
-    }
-  });
+  setupAuthListener();
 
-  if (sessionStorage.getItem(LOGOUT_FLAG) === '1') {
+  if (localStorage.getItem(LOGOUT_FLAG) === '1') {
     showLogin();
     return;
   }
 
-  const session = await getSession();
+  prefetchLoginUser();
+
+  let session = await getSession();
   if (!session) {
-    showLogin();
+    try {
+      const { data } = await sb.auth.refreshSession();
+      session = data?.session || null;
+    } catch (e) {
+      console.warn('refreshSession on boot', e);
+    }
+  }
+
+  if (session) {
+    await enterApp(session);
     return;
   }
-  setUserLabel(session);
-  updateConnectionBadge();
-  showMainApp();
-  await init();
+
+  showLogin();
 }
 
 function setConfigBusy(busy) {
@@ -975,8 +1053,6 @@ async function renderOverview() {
   `);
 
   el('ov-summary', `
-    <div class="met"><div class="ml">הכנסות</div><div class="mv g">₪${fmt(income)}</div></div>
-    <div class="met"><div class="ml">הוצאות</div><div class="mv r">₪${fmt(expenses)}</div></div>
     <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv">₪${fmt(fixedExp)}</div></div>
     <div class="met"><div class="ml">הוצאות משתנות</div><div class="mv">₪${fmt(varExp)}</div></div>
   `);
@@ -1032,13 +1108,8 @@ async function renderOverview() {
   const ip = Math.round(income / tot * 100);
   el('ov-cf', `
     <div class="cfbar"><div class="cfi" style="width:${ip}%">₪${fmt(income)}</div><div class="cfe" style="width:${100 - ip}%">₪${fmt(expenses)}</div></div>
-    <div class="row"><span class="row-name">הכנסות</span><span class="row-amount g">₪${fmt(income)}</span></div>
-    <div class="row"><span class="row-name">הוצאות</span><span class="row-amount r">₪${fmt(expenses)}</span></div>
-    <div class="row" style="border-top:0.5px solid var(--border2);margin-top:4px;padding-top:8px">
-      <span class="row-name" style="font-weight:600">יתרה</span>
-      <span class="row-amount ${cfNet >= 0 ? 'g' : 'r'}" style="font-size:15px">₪${fmt(cfNet)}</span>
-    </div>
-    <button type="button" class="btn primary" style="width:100%;justify-content:center;margin-top:.85rem;padding:12px" onclick="closeCashflowMonth()">📅 סגרתי את החודש — שמור להיסטוריה</button>
+    <div style="font-size:11px;color:var(--text2);margin:.5rem 0 .75rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
+    <button type="button" class="btn primary" style="width:100%;justify-content:center;padding:12px" onclick="closeCashflowMonth()">📅 סגרתי את החודש — שמור להיסטוריה</button>
     <p class="hint" style="margin-top:.5rem;text-align:center">קבועות נשארות לבד · עדכן משתנות ואז סגור חודש</p>
   `);
 
@@ -1061,26 +1132,51 @@ function updateAlertBadge(count) {
   else { badge.style.display = 'none'; }
 }
 
-function renderCashflowRow(c) {
+function sortCfItems(items) {
+  return [...items].sort((a, b) => {
+    const oa = isCfFixed(a) ? 0 : 1;
+    const ob = isCfFixed(b) ? 0 : 1;
+    if (oa !== ob) return oa - ob;
+    return (a.name || '').localeCompare(b.name || '', 'he');
+  });
+}
+
+function renderCashflowTableRow(c) {
   const fixed = isCfFixed(c);
   const amtClass = c.type === 'income' ? 'g' : 'r';
-  return `<div class="cf-row">
-      <div class="cf-row-main">
-        <span class="row-name">${c.name}</span>
-        <div class="cf-badges">
-          <span class="badge ${c.type === 'income' ? 'g' : 'r'}">${c.type === 'income' ? 'הכנסה' : 'הוצאה'}</span>
-          <span class="badge ${fixed ? 'b' : 'gy'}">${fixed ? 'קבועה' : 'משתנה'}</span>
-        </div>
-      </div>
-      <div class="cf-row-actions">
-        <input type="number" class="cf-inline-amt ${amtClass}" value="${Number(c.amount)}" inputmode="decimal"
-          aria-label="סכום ${c.name}"
-          onblur="saveCfAmount('${c.id}', this.value)"
-          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
-        <button type="button" class="btn sm" onclick="toggleCfFixed('${c.id}',${fixed ? 'false' : 'true'})" title="החלף קבועה/משתנה">${fixed ? '↔ משתנה' : '↔ קבועה'}</button>
-        <button class="btn icon-only" onclick="del('cashflow','${c.id}',true)" aria-label="מחק">🗑</button>
-      </div>
-    </div>`;
+  return `<tr>
+    <td class="cf-t-name">${c.name}</td>
+    <td class="cf-t-type"><span class="badge ${fixed ? 'b' : 'gy'}">${fixed ? 'קבועה' : 'משתנה'}</span></td>
+    <td class="cf-t-amt">
+      <input type="number" class="cf-inline-amt ${amtClass}" value="${Number(c.amount)}" inputmode="decimal"
+        aria-label="סכום ${c.name}"
+        onblur="saveCfAmount('${c.id}', this.value)"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
+    </td>
+    <td class="cf-t-act">
+      <button type="button" class="btn sm" onclick="toggleCfFixed('${c.id}',${fixed ? 'false' : 'true'})" title="החלף קבועה/משתנה">${fixed ? '↔ משתנה' : '↔ קבועה'}</button>
+      <button type="button" class="btn icon-only" onclick="del('cashflow','${c.id}',true)" aria-label="מחק">🗑</button>
+    </td>
+  </tr>`;
+}
+
+function renderCashflowTableBody(items, emptyText) {
+  if (!items.length) {
+    return `<tr><td colspan="4" class="cf-empty-cell">${emptyText}</td></tr>`;
+  }
+  return sortCfItems(items).map(renderCashflowTableRow).join('');
+}
+
+function renderCashflowTables(cf) {
+  const income = cf.filter(c => c.type === 'income');
+  const expense = cf.filter(c => c.type === 'expense');
+  const incTotal = income.reduce((a, b) => a + Number(b.amount), 0);
+  const expTotal = expense.reduce((a, b) => a + Number(b.amount), 0);
+
+  el('cf-income-tbody', renderCashflowTableBody(income, 'אין הכנסות — לחץ + קבועה או + משתנה'));
+  el('cf-expense-tbody', renderCashflowTableBody(expense, 'אין הוצאות — לחץ + קבועה או + משתנה'));
+  el('cf-income-total', `₪${fmt(incTotal)}`);
+  el('cf-expense-total', `₪${fmt(expTotal)}`);
 }
 
 async function saveCfAmount(id, val) {
@@ -1100,21 +1196,6 @@ async function saveCfAmount(id, val) {
   renderOverview();
 }
 window.saveCfAmount = saveCfAmount;
-
-function renderCashflowListHtml(cf) {
-  if (!cf.length) {
-    return emptyState('💰', 'אין עדיין פריטי תזרים', 'הוסף קבועה (משכורת, ביטוח) או משתנה (מכולת)');
-  }
-  const blocks = [
-    { title: 'הכנסות קבועות', items: cf.filter(c => c.type === 'income' && isCfFixed(c)) },
-    { title: 'הכנסות משתנות', items: cf.filter(c => c.type === 'income' && !isCfFixed(c)) },
-    { title: 'הוצאות קבועות', items: cf.filter(c => c.type === 'expense' && isCfFixed(c)) },
-    { title: 'הוצאות משתנות', items: cf.filter(c => c.type === 'expense' && !isCfFixed(c)) }
-  ];
-  return blocks.filter(b => b.items.length).map(b =>
-    `<div class="cf-sec-title">${b.title}</div>${b.items.map(renderCashflowRow).join('')}`
-  ).join('');
-}
 
 async function toggleCfFixed(id, isFixed) {
   if (!sb) { toast('לא מחובר'); return; }
@@ -1178,7 +1259,7 @@ async function renderFinance() {
     <div style="font-size:11px;color:var(--text2);margin-bottom:.5rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
   `);
 
-  el('cf-list', renderCashflowListHtml(cf));
+  renderCashflowTables(cf);
 
   await renderCashflowHistoryOnly();
 }
@@ -1760,12 +1841,30 @@ const forms = {
     <div class="fg"><label>תאריך ראשון</label><input id="f4" type="date"></div>`
 };
 const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', sacc: 'חשבון חדש', sstk: 'מניה/ETF', sloan: 'הלוואה על נכס', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', car: 'רכב חדש', cev: 'אירוע רכב', shop: 'קנייה', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+const CF_MODAL_TITLES = {
+  'income-fixed': 'הכנסה קבועה',
+  'income-variable': 'הכנסה משתנה',
+  'expense-fixed': 'הוצאה קבועה',
+  'expense-variable': 'הוצאה משתנה',
+  fixed: 'הוצאה קבועה',
+  variable: 'הוצאה משתנה'
+};
+
+function applyCfModalDefaults(target) {
+  const f3 = document.getElementById('f3');
+  const f4 = document.getElementById('f4');
+  if (!f3 || !f4) return;
+  const t = String(target || '');
+  if (t.startsWith('income')) f3.value = 'income';
+  else if (t.startsWith('expense') || t === 'fixed' || t === 'variable') f3.value = 'expense';
+  const isVar = t.includes('variable') || t === 'variable';
+  f4.value = isVar ? '0' : '1';
+}
 
 function om(type, target) {
   modalType = type; modalTarget = target || null;
   let title = titles[type] || type;
-  if (type === 'cf' && target === 'fixed') title = 'הוצאה/הכנסה קבועה';
-  if (type === 'cf' && target === 'variable') title = 'הוצאה/הכנסה משתנה';
+  if (type === 'cf' && CF_MODAL_TITLES[target]) title = CF_MODAL_TITLES[target];
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = type === 'cfclose'
     ? buildCfCloseForm()
@@ -1776,16 +1875,13 @@ function om(type, target) {
     if (f1) f1.focus();
     if (type === 'cf') {
       bindCfTemplateButtons();
-      const f4 = document.getElementById('f4');
-      if (f4) f4.value = target === 'variable' ? '0' : '1';
-      if (target === 'fixed') {
-        const f3 = document.getElementById('f3');
-        if (f3) f3.value = 'expense';
-      }
-      if (target === 'variable') {
-        const f3 = document.getElementById('f3');
-        if (f3) f3.value = 'expense';
-      }
+      const preset = /^(income|expense)-(fixed|variable)$/.test(String(target || ''));
+      ['f3', 'f4'].forEach(id => {
+        const inp = document.getElementById(id);
+        const fg = inp?.closest('.fg');
+        if (fg) fg.style.display = preset ? 'none' : '';
+      });
+      applyCfModalDefaults(target);
     }
   }, 80);
 }
@@ -1807,7 +1903,10 @@ async function saveModal() {
     if (t === 'loan') await sb.from('loans').insert({ name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, note: gv('f4') });
     else if (t === 'cc') await sb.from('credit_cards').insert({ name: gv('f1'), credit_limit: +gv('f2') || 0, used: +gv('f3') || 0, cycle: gv('f4') });
     else if (t === 'cf') {
-      const isFixed = modalTarget === 'fixed' || (modalTarget !== 'variable' && gv('f4') !== '0');
+      const tgt = String(modalTarget || '');
+      const presetFixed = tgt.endsWith('-fixed') || tgt === 'fixed';
+      const presetVar = tgt.endsWith('-variable') || tgt === 'variable';
+      const isFixed = presetFixed || (!presetVar && gv('f4') !== '0');
       const { error } = await sb.from('cashflow').insert({
         name: gv('f1'), amount: +gv('f2') || 0, type: gv('f3'), is_fixed: isFixed
       });
@@ -1943,4 +2042,10 @@ function onReady(fn) {
 onReady(() => {
   bindUi();
   boot();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') restoreSessionOnResume();
+  });
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) restoreSessionOnResume();
+  });
 });

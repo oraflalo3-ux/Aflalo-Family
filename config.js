@@ -1,2 +1,5 @@
-// אופציונלי: העתק מ-config.example.js והזן URL + Anon Key כדי לדלג על מסך ההגדרה
-// window.APP_CONFIG = { supabaseUrl: '...', supabaseAnonKey: '...', authEmailDomain: 'bayit.local' };
+window.APP_CONFIG = {
+    supabaseUrl: 'https://aqnvffocjpicidndldbn.supabase.co',
+    supabaseAnonKey: 'sb_publishable_GxMske6XnKiQdRNi2r_ugA_1jy3YtOY',
+    authEmailDomain: 'bayit.local'
+  };
