@@ -309,6 +309,23 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .check-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 0.5px solid var(--border); }
 .check-row:last-child { border-bottom: none; }
 .check-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--green); flex-shrink: 0; cursor: pointer; }
+
+/* Shopping */
+.shop-card { margin-bottom: 1rem; }
+.shop-progress { margin-bottom: .75rem; }
+.shop-progress-bar { height: 8px; background: var(--bg3); border-radius: 99px; overflow: hidden; }
+.shop-progress-fill { height: 100%; background: var(--green-mid); border-radius: 99px; transition: width .25s ease; }
+.shop-progress-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 5px; }
+.shop-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .65rem; }
+.shop-cat-hdr { font-size: 10px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; padding: 10px 0 4px; border-top: 0.5px solid var(--border); margin-top: 4px; }
+.shop-cat-hdr:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+.shop-row .check-text { flex: 1; min-width: 0; }
+.shop-row .shop-cat-badge { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+.shop-quick { display: flex; gap: 6px; align-items: stretch; margin-top: .75rem; padding-top: .75rem; border-top: 0.5px solid var(--border); }
+.shop-quick select { flex: 0 0 7.5rem; font-size: 12px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 8px; background: var(--bg2); color: var(--text); font-family: var(--font); }
+.shop-quick input { flex: 1; min-width: 0; font-size: 14px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 10px 12px; background: var(--bg2); color: var(--text); font-family: var(--font); }
+.shop-done-collapsed { margin-top: .5rem; }
+.shop-done-collapsed summary { font-size: 12px; color: var(--text2); cursor: pointer; padding: 6px 0; }
 .check-text { font-size: 13px; flex: 1; }
 .check-text.done { text-decoration: line-through; color: var(--text3); }
 
@@ -575,13 +592,20 @@ html.app-main #config-screen { display: none !important; }
 </div>
 
 <div id="page-daily" class="page">
+  <div class="card shop-card">
+    <div class="card-header">
+      <span class="card-title">🛒 רשימת סופר</span>
+      <button class="btn sm" type="button" onclick="om('shop')">+ פרטים</button>
+    </div>
+    <div id="shop-progress"></div>
+    <div id="shop-toolbar"></div>
+    <div id="shop-tpl"></div>
+    <div id="shop-list"></div>
+    <div id="shop-done-wrap"></div>
+    <div id="shop-quick"></div>
+  </div>
   <div class="two">
     <div>
-      <div class="sec">קניות</div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">רשימת סופר</span><button class="btn sm" onclick="om('shop')">+</button></div>
-        <div id="shop-list"></div>
-      </div>
       <div class="sec">חוגים</div>
       <div class="card">
         <div class="card-header"><span class="card-title">חוגים</span><button class="btn sm" onclick="om('act')">+</button></div>
@@ -726,6 +750,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=35"></script>
+<script src="app.js?v=36"></script>
 </body>
 </html>

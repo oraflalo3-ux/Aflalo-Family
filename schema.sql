@@ -144,6 +144,9 @@ create table shopping (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   qty text default '1',
+  category text default 'other',
+  sort_order int default 0,
+  added_by text default '',
   done boolean default false,
   created_at timestamptz default now()
 );

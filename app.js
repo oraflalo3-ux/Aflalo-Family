@@ -1529,20 +1529,253 @@ async function renderCars() {
   }).join('') || '<div class="empty" style="padding:1rem">אין רכבים</div>');
 }
 
+// ── Shopping ──────────────────────────────────────────────
+const SHOP_CATS = [
+  { id: 'dairy', label: 'מוצרי חלב' },
+  { id: 'produce', label: 'ירקות ופירות' },
+  { id: 'meat', label: 'בשר ודגים' },
+  { id: 'grocery', label: 'מזווה' },
+  { id: 'frozen', label: 'קפואים' },
+  { id: 'cleaning', label: 'ניקיון' },
+  { id: 'other', label: 'אחר' }
+];
+
+const SHOP_WEEKLY = [
+  { name: 'חלב', qty: '2', category: 'dairy' },
+  { name: 'ביצים', qty: '1', category: 'dairy' },
+  { name: 'גבינה צהובה', qty: '1', category: 'dairy' },
+  { name: 'יוגורט', qty: '6', category: 'dairy' },
+  { name: 'לחם', qty: '1', category: 'grocery' },
+  { name: 'עגבניות', qty: '1', category: 'produce' },
+  { name: 'מלפפון', qty: '2', category: 'produce' },
+  { name: 'בננות', qty: '1', category: 'produce' },
+  { name: 'עוף', qty: '1', category: 'meat' },
+  { name: 'אורז', qty: '1', category: 'grocery' },
+  { name: 'שמן', qty: '1', category: 'grocery' },
+  { name: 'נייר טואלט', qty: '1', category: 'cleaning' }
+];
+
+const SHOP_QUICK_CHIPS = ['חלב', 'לחם', 'ביצים', 'מים', 'גבינה', 'עגבניות'];
+
+function getShopHideDone() {
+  return localStorage.getItem('bayit_shop_hide_done') !== '0';
+}
+
+function shopCatLabel(id) {
+  return SHOP_CATS.find(c => c.id === id)?.label || 'אחר';
+}
+
+function sortShoppingItems(items) {
+  const order = Object.fromEntries(SHOP_CATS.map((c, i) => [c.id, i]));
+  return [...items].sort((a, b) => {
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    const ca = order[a.category] ?? 99;
+    const cb = order[b.category] ?? 99;
+    if (ca !== cb) return ca - cb;
+    return (a.name || '').localeCompare(b.name || '', 'he');
+  });
+}
+
+async function getShopAddedBy() {
+  const session = await getSession();
+  if (!session?.user?.email) return '';
+  return session.user.email.split('@')[0];
+}
+
+async function insertShopRow(row) {
+  let payload = { ...row };
+  let { error } = await sb.from('shopping').insert(payload);
+  if (error && /column/i.test(error.message || '')) {
+    const { category, sort_order, added_by, ...rest } = payload;
+    ({ error } = await sb.from('shopping').insert(rest));
+  }
+  return error;
+}
+
+function buildShopFormHtml() {
+  const opts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
+  return `<div class="fg"><label>פריט</label><input id="f1" placeholder="חלב, לחם..."></div>
+    <div class="fg"><label>כמות</label><input id="f2" placeholder="1"></div>
+    <div class="fg"><label>קטגוריה</label><select id="f3">${opts}</select></div>`;
+}
+
+function renderShopListHtml(items, hideDone) {
+  const sorted = sortShoppingItems(items);
+  const active = sorted.filter(s => !s.done);
+  const bought = sorted.filter(s => s.done);
+  const visible = hideDone ? active : sorted;
+
+  if (!items.length) {
+    return '<div class="empty">ריקה — הוסיפו פריט למטה או «רשימת שבוע»</div>';
+  }
+
+  let html = '';
+  let lastCat = null;
+  visible.forEach(s => {
+    const cat = s.category || 'other';
+    if (cat !== lastCat) {
+      html += `<div class="shop-cat-hdr">${escHtml(shopCatLabel(cat))}</div>`;
+      lastCat = cat;
+    }
+    html += `<div class="check-row shop-row">
+      <input type="checkbox" ${s.done ? 'checked' : ''} onchange="toggleDone('shopping','${s.id}',this.checked)">
+      <span class="check-text ${s.done ? 'done' : ''}">${escHtml(s.name)}</span>
+      <span class="badge gy">${escHtml(s.qty || '1')}</span>
+      <button class="btn icon-only" type="button" onclick="del('shopping','${s.id}',true)">🗑</button>
+    </div>`;
+  });
+
+  if (hideDone && bought.length) {
+    html += `<details class="shop-done-collapsed"><summary>נקנו (${bought.length}) — הצג</summary>`;
+    bought.forEach(s => {
+      html += `<div class="check-row shop-row">
+        <input type="checkbox" checked onchange="toggleDone('shopping','${s.id}',false)">
+        <span class="check-text done">${escHtml(s.name)}</span>
+        <span class="badge gy">${escHtml(s.qty || '1')}</span>
+        <button class="btn icon-only" type="button" onclick="del('shopping','${s.id}',true)">🗑</button>
+      </div>`;
+    });
+    html += '</details>';
+  }
+  return html;
+}
+
+async function renderShopSection(shopping) {
+  const hideDone = getShopHideDone();
+  const done = shopping.filter(x => x.done).length;
+  const total = shopping.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  el('shop-progress', total ? `
+    <div class="shop-progress">
+      <div class="shop-progress-bar"><div class="shop-progress-fill" style="width:${pct}%"></div></div>
+      <div class="shop-progress-meta"><span>${done} מתוך ${total} בסל</span><span>${pct}%</span></div>
+    </div>` : '');
+
+  el('shop-toolbar', `
+    <div class="shop-toolbar">
+      <button type="button" class="btn sm primary" onclick="applyWeeklyShopTemplates()">📋 רשימת שבוע</button>
+      <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג נקנו' : 'הסתר נקנו'}</button>
+      ${done ? `<button type="button" class="btn sm danger" onclick="clearDoneShopping()">נקה נקנו (${done})</button>` : ''}
+      <button type="button" class="btn sm" onclick="closeShopTrip()">סגור קנייה → תזרים</button>
+    </div>`);
+
+  const chips = SHOP_QUICK_CHIPS.map(n =>
+    `<button type="button" class="btn sm cf-tpl" onclick="addShopQuickChip('${escAttr(n)}')">${n}</button>`
+  ).join('');
+  el('shop-tpl', `<div class="cf-tpl-wrap">${chips}</div>`);
+
+  el('shop-list', renderShopListHtml(shopping, hideDone));
+  el('shop-done-wrap', '');
+
+  const catOpts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
+  el('shop-quick', `
+    <div class="shop-quick">
+      <select id="shop-quick-cat" aria-label="קטגוריה">${catOpts}</select>
+      <input id="shop-quick-name" type="text" placeholder="הקלד פריט ולחץ Enter" autocomplete="off">
+      <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
+    </div>`);
+  bindShopQuickInput();
+}
+
+window.quickAddShop = async function () {
+  const name = gv('shop-quick-name');
+  if (!name) return;
+  const category = document.getElementById('shop-quick-cat')?.value || 'other';
+  const err = await insertShopRow({ name, qty: '1', category, added_by: await getShopAddedBy() });
+  if (err) { toast('שגיאה בהוספה'); console.error(err); return; }
+  toast('✓ נוסף');
+  await renderDaily();
+};
+
+window.addShopQuickChip = async function (name) {
+  const tpl = SHOP_WEEKLY.find(t => t.name === name);
+  const err = await insertShopRow({
+    name,
+    qty: tpl?.qty || '1',
+    category: tpl?.category || 'other',
+    added_by: await getShopAddedBy()
+  });
+  if (err) { toast('שגיאה'); return; }
+  toast('✓ ' + name);
+  await renderDaily();
+};
+
+window.applyWeeklyShopTemplates = async function () {
+  if (!sb) { toast('לא מחובר'); return; }
+  const existing = await fetch_('shopping');
+  const names = new Set(existing.filter(i => !i.done).map(i => (i.name || '').trim().toLowerCase()));
+  const addedBy = await getShopAddedBy();
+  let added = 0;
+  for (const t of SHOP_WEEKLY) {
+    if (names.has(t.name.trim().toLowerCase())) continue;
+    const err = await insertShopRow({ name: t.name, qty: t.qty, category: t.category, added_by: addedBy });
+    if (!err) { names.add(t.name.trim().toLowerCase()); added++; }
+  }
+  toast(added ? `✓ נוספו ${added} פריטים` : 'כבר ברשימה');
+  await renderDaily();
+};
+
+window.toggleShopHideDone = async function () {
+  setShopHideDone(!getShopHideDone());
+  await renderDaily();
+};
+
+function setShopHideDone(v) {
+  localStorage.setItem('bayit_shop_hide_done', v ? '1' : '0');
+}
+
+window.clearDoneShopping = async function () {
+  if (!sb) return;
+  const items = await fetch_('shopping');
+  const doneIds = items.filter(i => i.done).map(i => i.id);
+  if (!doneIds.length) { toast('אין פריטים נקנו'); return; }
+  if (!confirm(`למחוק ${doneIds.length} פריטים שסומנו כנקנו?`)) return;
+  const { error } = await sb.from('shopping').delete().in('id', doneIds);
+  if (error) { toast('שגיאה'); return; }
+  toast('✓ נוקה');
+  await renderDaily();
+};
+
+window.closeShopTrip = async function () {
+  if (!sb) { toast('לא מחובר'); return; }
+  const amount = prompt('סכום הקנייה הכולל (₪)? השאר ריק לביטול');
+  if (amount === null || amount.trim() === '') return;
+  const n = parseFloat(amount.replace(/,/g, ''));
+  if (!Number.isFinite(n) || n <= 0) { toast('סכום לא תקין'); return; }
+  const { error } = await sb.from('cashflow').insert({
+    name: 'סופר / מכולת',
+    amount: n,
+    type: 'expense',
+    is_fixed: false
+  });
+  if (error) { toast('שגיאה בתזרים'); console.error(error); return; }
+  const items = await fetch_('shopping');
+  const doneIds = items.filter(i => i.done).map(i => i.id);
+  if (doneIds.length && confirm(`נוסף לתזרים. למחוק ${doneIds.length} פריטים שנקנו מהרשימה?`)) {
+    await sb.from('shopping').delete().in('id', doneIds);
+  }
+  toast('✓ נרשם בתזרים');
+  await renderDaily();
+  await renderOverview();
+};
+
+function bindShopQuickInput() {
+  const inp = document.getElementById('shop-quick-name');
+  if (!inp || inp.dataset.bound) return;
+  inp.dataset.bound = '1';
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); quickAddShop(); }
+  });
+}
+
 // ── Daily ─────────────────────────────────────────────────
 async function renderDaily() {
   const [shopping, activities, tasks, reminders] = await Promise.all([
     fetch_('shopping'), fetch_('activities'), fetch_('tasks'), fetch_('reminders')
   ]);
 
-  const done = shopping.filter(x => x.done).length;
-  el('shop-list', shopping.map(s => `
-    <div class="check-row">
-      <input type="checkbox" ${s.done ? 'checked' : ''} onchange="toggleDone('shopping','${s.id}',this.checked)">
-      <span class="check-text ${s.done ? 'done' : ''}">${s.name}</span>
-      <span class="badge gy">${s.qty}</span>
-      <button class="btn icon-only" onclick="del('shopping','${s.id}',true)">🗑</button>
-    </div>`).join('') + (shopping.length ? `<div style="font-size:11px;color:var(--text3);text-align:center;padding:5px">${done}/${shopping.length} ✓</div>` : '<div class="empty">ריקה</div>'));
+  await renderShopSection(shopping);
 
   el('act-list', activities.map(a => `
     <div class="row">
@@ -1624,8 +1857,10 @@ function toggleBlock(key, elId) {
 }
 
 async function toggleDone(table, id, val) {
-  const field = table === 'shopping' ? 'done' : 'done';
-  await sb.from(table).update({ [field]: val }).eq('id', id);
+  if (!sb) return;
+  await sb.from(table).update({ done: val }).eq('id', id);
+  const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+  if (page) await renderPage(page);
 }
 
 const DELETE_CONFIRM = {
@@ -1793,6 +2028,10 @@ function escAttr(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
+function escHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function buildCfFormHtml() {
   const chips = CF_TEMPLATES.map(t =>
     `<button type="button" class="btn sm cf-tpl" data-tpl="${escAttr(t)}">${t}</button>`
@@ -1871,8 +2110,6 @@ const forms = {
     <div class="fg"><label>תאריך</label><input id="f2" type="date"></div>
     <div class="fg"><label>הערה</label><input id="f3" placeholder="פרטים..."></div>
     <div class="fg"><label>עלות (₪)</label><input id="f4" type="number" placeholder="0"></div>`,
-  shop: `<div class="fg"><label>פריט</label><input id="f1" placeholder="חלב..."></div>
-    <div class="fg"><label>כמות</label><input id="f2" placeholder="1"></div>`,
   act: `<div class="fg"><label>חוג</label><input id="f1" placeholder="שחייה..."></div>
     <div class="fg"><label>ילד</label><input id="f2" placeholder="שם"></div>
     <div class="fg"><label>יום ושעה</label><input id="f3" placeholder="שלישי 17:00"></div>
@@ -1915,7 +2152,7 @@ function om(type, target) {
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = type === 'cfclose'
     ? buildCfCloseForm()
-    : (type === 'cf' ? buildCfFormHtml() : (forms[type] || ''));
+    : (type === 'cf' ? buildCfFormHtml() : type === 'shop' ? buildShopFormHtml() : (forms[type] || ''));
   document.getElementById('modal').classList.add('open');
   setTimeout(() => {
     const f1 = document.getElementById('f1');
@@ -2013,7 +2250,15 @@ async function saveModal() {
     else if (t === 'pexp') await sb.from('property_expenses').insert({ property_id: tgt, name: gv('f1'), amount: +gv('f2') || 0, expense_date: gv('f3') });
     else if (t === 'car') await sb.from('cars').insert({ make: gv('f1'), model: gv('f2'), year: +gv('f3') || 2020, plate: gv('f4') });
     else if (t === 'cev') await sb.from('car_events').insert({ car_id: tgt, type: gv('f1'), event_date: gv('f2'), note: gv('f3'), cost: +gv('f4') || 0 });
-    else if (t === 'shop') await sb.from('shopping').insert({ name: gv('f1'), qty: gv('f2') || '1' });
+    else if (t === 'shop') {
+      const err = await insertShopRow({
+        name: gv('f1'),
+        qty: gv('f2') || '1',
+        category: gv('f3') || 'other',
+        added_by: await getShopAddedBy()
+      });
+      if (err) throw err;
+    }
     else if (t === 'act') await sb.from('activities').insert({ name: gv('f1'), child: gv('f2'), day: gv('f3'), cost: +gv('f4') || 0 });
     else if (t === 'task') await sb.from('tasks').insert({ text: gv('f1'), who: gv('f2') || 'שניהם' });
     else if (t === 'rem') await sb.from('reminders').insert({ text: gv('f1'), reminder_date: gv('f2'), who: gv('f3') || 'שניהם' });
