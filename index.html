@@ -286,15 +286,19 @@ html.app-main #config-screen { display: none !important; }
 <div id="config-screen" class="config-screen" style="display:none">
   <div class="config-box">
     <div style="font-size:28px;margin-bottom:.5rem">🏠</div>
-    <h2>משפחת אפללו — חיבור ל-Supabase</h2>
-    <p style="margin-bottom:.75rem">מ-Supabase: <strong>Project Settings → API</strong> (לא מסך Users!)</p>
-    <div class="fg"><label>Project URL</label><input id="cfg-url" placeholder="https://abcdefgh.supabase.co" dir="ltr">
-      <div class="hint">רק <span dir="ltr">https://xxxxx.supabase.co</span> — בלי <span dir="ltr">/rest/v1</span> ובלי <span dir="ltr">/</span> בהתחלה</div></div>
-    <div class="fg"><label>Publishable key (או anon)</label><input id="cfg-key" placeholder="sb_publishable_... או eyJ..." dir="ltr" type="password">
-      <div class="hint">מעתיקים מ-<span dir="ltr">API Keys → publishable</span> — <strong>לא</strong> שם משתמש ולא סיסמה</div></div>
-    <p id="cfg-error" style="font-size:12px;color:var(--red);margin-bottom:.5rem;display:none"></p>
+    <h2>משפחת אפללו — שלב 1</h2>
+    <p style="margin-bottom:.75rem">מ-Supabase: <strong>Project Settings → API</strong>. אחרי שמירה יופיע <strong>שלב 2</strong> — אימייל וסיסמה (מ-Users).</p>
+    <div class="fg"><label>Project URL</label><input id="cfg-url" placeholder="https://abcdefgh.supabase.co" dir="ltr" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="url">
+      <div class="hint">רק <span dir="ltr">https://xxxxx.supabase.co</span> — בלי <span dir="ltr">/rest/v1</span></div></div>
+    <div class="fg"><label>Publishable key (או anon)</label>
+      <div style="display:flex;gap:6px;align-items:stretch">
+        <input id="cfg-key" style="flex:1" placeholder="sb_publishable_... או eyJ..." dir="ltr" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" autocomplete="off">
+        <button type="button" class="btn sm" onclick="toggleCfgKeyVisible()" style="flex-shrink:0">הסתר</button>
+      </div>
+      <div class="hint">מ-<span dir="ltr">API Keys → publishable</span>. באייפון: לחץ והחזק → הדבק</div></div>
+    <p id="cfg-error" style="font-size:13px;color:var(--red);margin-bottom:.5rem;display:none;line-height:1.5"></p>
     <button type="button" class="btn primary" id="btn-save-config" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfig()">בדוק חיבור ושמור</button>
-    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfigSkipTest()">שמור בלי בדיקה (אם נתקע)</button>
+    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem;font-weight:600" onclick="saveConfigSkipTest()">📱 שמור בלי בדיקה (מומלץ באייפון אם נתקע)</button>
     <button type="button" class="btn sm" style="width:100%;justify-content:center" onclick="resetStoredConfig()">נקה הגדרות שמורות</button>
   </div>
 </div>
@@ -482,6 +486,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>
