@@ -824,17 +824,90 @@ function carServiceRequiresKm(type) {
 }
 
 let pendingCarEventComplete = null;
+let carServiceLogTableOk = true;
 
-function buildCevDoneFormHtml(ev) {
+function dbErrHint(error) {
+  const msg = `${error?.message || ''} ${error?.code || ''} ${error?.details || ''}`.toLowerCase();
+  if (/does not exist|relation|schema cache|42p01|car_service_log/i.test(msg)) {
+    return 'חסרה טבלת יומן טיפולים — הרץ car-service-log-migration.sql ב-Supabase';
+  }
+  if (/odometer_km|column.*cars/i.test(msg)) {
+    return 'חסר עמודת ק״מ ברכב — הרץ car-service-log-migration.sql ב-Supabase';
+  }
+  if (/row-level|policy|42501|jwt|pgrst301|permission/i.test(msg)) {
+    return 'אין הרשאה לשמירה — התחבר שוב או הרץ את המיגרציה (RLS)';
+  }
+  return (error?.message || 'שגיאה בשמירה').slice(0, 160);
+}
+
+async function probeCarServiceLogTable() {
+  if (!sb) return false;
+  const { error } = await sb.from('car_service_log').select('id').limit(1);
+  if (error && /does not exist|relation|schema cache/i.test(error.message || '')) {
+    carServiceLogTableOk = false;
+    return false;
+  }
+  carServiceLogTableOk = !error;
+  return carServiceLogTableOk;
+}
+
+function buildCevDoneFormHtml(ev, opts = {}) {
   const today = new Date().toISOString().split('T')[0];
   const needsKm = carServiceRequiresKm(ev.type);
-  return `<p class="hint" style="margin-bottom:.75rem">סגירת <strong>${escHtml(ev.type)}</strong> — יירשם ביומן הטיפולים${needsKm ? ' (חובה: תאריך + ק״מ)' : ''}</p>
+  const defaultKm = opts.defaultKm != null && opts.defaultKm !== '' ? String(opts.defaultKm) : '';
+  const warn = opts.tableWarn ? `<p class="hint" style="color:var(--red-mid);margin-bottom:.75rem">${escHtml(opts.tableWarn)}</p>` : '';
+  return `${warn}<p class="hint" style="margin-bottom:.75rem">סגירת <strong>${escHtml(ev.type)}</strong> — יירשם ביומן הטיפולים${needsKm ? ' (חובה: תאריך + ק״מ)' : ''}</p>
     <div class="fg"><label>סוג</label><input id="f_type" value="${escAttr(ev.type)}" readonly></div>
     <div class="fg"><label>תאריך ביצוע</label><input id="f2" type="date" value="${today}" required></div>
     <div class="fg"><label>ק״מ ברכב בביצוע ${needsKm ? '(חובה)' : '(אופציונלי)'}</label>
-      <input id="f_km" type="number" min="0" step="1" inputmode="numeric" placeholder="למשל 85420" ${needsKm ? 'required' : ''}></div>
+      <input id="f_km" type="number" min="0" step="1" inputmode="numeric" placeholder="למשל 85420" value="${escAttr(defaultKm)}" ${needsKm ? 'required' : ''}></div>
     <div class="fg"><label>עלות (₪)</label><input id="f4" type="number" min="0" placeholder="0" value="${Number(ev.cost) || ''}"></div>
     <div class="fg"><label>הערה</label><input id="f3" placeholder="פרטים, מוסך..." value="${escAttr(ev.note || '')}"></div>`;
+}
+
+async function saveCarEventComplete(ev, performed, odometer, cost, note) {
+  if (!sb) { toast('לא מחובר'); return false; }
+  const ready = await probeCarServiceLogTable();
+  if (!ready) {
+    toast('חסרה טבלת יומן טיפולים — הרץ car-service-log-migration.sql ב-Supabase');
+    return false;
+  }
+  const { error: logErr } = await sb.from('car_service_log').insert({
+    car_id: ev.car_id,
+    type: ev.type,
+    performed_date: performed,
+    odometer_km: odometer,
+    cost,
+    note
+  });
+  if (logErr) {
+    toast(dbErrHint(logErr));
+    console.error('car_service_log insert', logErr);
+    return false;
+  }
+  if (odometer > 0) {
+    const { error: kmErr } = await sb.from('cars').update({ odometer_km: odometer }).eq('id', ev.car_id);
+    if (kmErr) console.warn('cars odometer update', kmErr);
+  }
+  if (cost > 0 && assetExpensesTableOk) {
+    const { error: expErr } = await sb.from('asset_expenses').insert({
+      asset_type: 'car',
+      asset_id: ev.car_id,
+      name: `${ev.type}${note ? ' — ' + note : ''}`,
+      amount: cost,
+      kind: 'once',
+      expense_date: performed,
+      note: `ק״מ ${odometer}`
+    });
+    if (expErr) console.warn('asset_expenses car once', expErr);
+  }
+  const { error: delErr } = await sb.from('car_events').delete().eq('id', ev.id);
+  if (delErr) {
+    toast(dbErrHint(delErr));
+    console.error('car_events delete', delErr);
+    return false;
+  }
+  return true;
 }
 
 async function openCompleteCarEvent(id) {
@@ -844,11 +917,18 @@ async function openCompleteCarEvent(id) {
     toast('לא נמצא אירוע');
     return;
   }
+  await probeCarServiceLogTable();
+  let defaultKm = '';
+  const { data: car } = await sb.from('cars').select('odometer_km').eq('id', ev.car_id).maybeSingle();
+  if (car?.odometer_km) defaultKm = car.odometer_km;
   pendingCarEventComplete = ev;
   modalType = 'cev_done';
   modalTarget = id;
   document.getElementById('modal-title').textContent = `בוצע: ${ev.type}`;
-  document.getElementById('modal-body').innerHTML = buildCevDoneFormHtml(ev);
+  const tableWarn = carServiceLogTableOk
+    ? ''
+    : 'לא מוגדר יומן טיפולים ב-Supabase — הרץ car-service-log-migration.sql לפני שמירה';
+  document.getElementById('modal-body').innerHTML = buildCevDoneFormHtml(ev, { defaultKm, tableWarn });
   document.getElementById('modal').classList.add('open');
   setTimeout(() => document.getElementById('f2')?.focus(), 80);
 }
@@ -1861,10 +1941,14 @@ async function fetchCarServiceLog() {
   if (!sb) return [];
   const { data, error } = await sb.from('car_service_log').select('*');
   if (error) {
-    if (/does not exist|relation/i.test(error.message || '')) return [];
+    if (/does not exist|relation|schema cache/i.test(error.message || '')) {
+      carServiceLogTableOk = false;
+      return [];
+    }
     console.error('fetchCarServiceLog', error);
     return [];
   }
+  carServiceLogTableOk = true;
   return (data || []).sort((a, b) => (b.performed_date || '').localeCompare(a.performed_date || ''));
 }
 
@@ -2884,7 +2968,7 @@ async function saveModal() {
     }
     else if (t === 'cev_done') {
       const ev = pendingCarEventComplete;
-      if (!ev) { toast('אירוע לא נטען'); return; }
+      if (!ev) { toast('אירוע לא נטען — סגור ופתח שוב'); return; }
       const performed = gv('f2');
       const kmRaw = document.getElementById('f_km')?.value?.trim();
       const km = kmRaw === '' ? NaN : parseInt(kmRaw, 10);
@@ -2896,33 +2980,8 @@ async function saveModal() {
         return;
       }
       const odometer = Number.isFinite(km) && km >= 0 ? km : 0;
-      const { error: logErr } = await sb.from('car_service_log').insert({
-        car_id: ev.car_id,
-        type: ev.type,
-        performed_date: performed,
-        odometer_km: odometer,
-        cost,
-        note
-      });
-      if (logErr) {
-        toast(logErr.message?.includes('car_service_log') ? 'הרץ car-service-log-migration.sql' : 'שגיאה בשמירה');
-        throw logErr;
-      }
-      if (odometer > 0) {
-        await sb.from('cars').update({ odometer_km: odometer }).eq('id', ev.car_id);
-      }
-      if (cost > 0 && assetExpensesTableOk) {
-        await sb.from('asset_expenses').insert({
-          asset_type: 'car',
-          asset_id: ev.car_id,
-          name: `${ev.type}${note ? ' — ' + note : ''}`,
-          amount: cost,
-          kind: 'once',
-          expense_date: performed,
-          note: `ק״מ ${odometer}`
-        });
-      }
-      await sb.from('car_events').delete().eq('id', ev.id);
+      const ok = await saveCarEventComplete(ev, performed, odometer, cost, note);
+      if (!ok) return;
       pendingCarEventComplete = null;
       closeModal();
       toast('✓ נשמר ביומן הטיפולים');
@@ -2984,7 +3043,7 @@ async function saveModal() {
     const page = document.querySelector('.page.active')?.id?.replace('page-', '');
     if (page) renderPage(page);
     renderOverview();
-  } catch (e) { toast('שגיאה — נסה שוב'); console.error(e); }
+  } catch (e) { toast(dbErrHint(e) || 'שגיאה — נסה שוב'); console.error(e); }
   finally { setModalSaving(false); }
 }
 

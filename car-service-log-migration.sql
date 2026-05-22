@@ -1,4 +1,5 @@
 -- יומן טיפולים וטסטים לרכב (הרץ ב-Supabase SQL Editor)
+-- חובה לפני שימוש ב"בוצע" על תזכורת טסט/טיפול באפליקציה
 
 alter table cars add column if not exists odometer_km int default 0;
 
