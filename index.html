@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ביתשלנו</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
 <link rel="manifest" href="manifest.json">
 <style>
 :root {
@@ -198,6 +199,20 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 </head>
 <body>
 
+<!-- Login screen -->
+<div id="login-screen" class="config-screen" style="display:none">
+  <div class="config-box">
+    <div style="font-size:28px;margin-bottom:.5rem">🏠</div>
+    <h2>ביתשלנו</h2>
+    <p>הכנס שם משתמש וסיסמה. רק למשתמשים מורשים.</p>
+    <div class="fg"><label>שם משתמש</label><input id="login-user" placeholder="ora" autocomplete="username"></div>
+    <div class="fg"><label>סיסמה</label><input id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password"></div>
+    <p class="hint" style="margin-bottom:.75rem">אם לא הזנת @ — יישלח כ-<span dir="ltr">שם@bayit.local</span> (כמו ב-Supabase)</p>
+    <button class="btn primary" style="width:100%;justify-content:center" onclick="doLogin()">כניסה</button>
+    <p id="login-error" style="font-size:12px;color:var(--red);margin-top:.75rem;display:none"></p>
+  </div>
+</div>
+
 <!-- Config screen (shown before setup) -->
 <div id="config-screen" class="config-screen" style="display:none">
   <div class="config-box">
@@ -206,7 +221,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
     <p>הכנס את פרטי ה-Supabase שלך כדי להתחיל. תמצא אותם ב: Project Settings → API</p>
     <div class="fg"><label>Supabase URL</label><input id="cfg-url" placeholder="https://xxxx.supabase.co" dir="ltr"></div>
     <div class="fg"><label>Anon Key</label><input id="cfg-key" placeholder="eyJhbGci..." dir="ltr" type="password"></div>
-    <button class="btn primary" style="width:100%;justify-content:center;margin-top:.5rem" onclick="saveConfig()">התחבר</button>
+    <button class="btn primary" style="width:100%;justify-content:center;margin-top:.5rem" onclick="saveConfig()">שמור והמשך</button>
   </div>
 </div>
 
@@ -216,8 +231,10 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 <div class="topbar">
   <div class="logo">בית<span>שלנו</span></div>
   <div style="display:flex;align-items:center;gap:8px">
+    <span id="user-label" style="font-size:11px;color:var(--text3)"></span>
     <span id="sync-indicator" style="font-size:11px;color:var(--text3)"></span>
     <button class="btn sm" onclick="refreshStocks()" title="עדכן מניות">⟳ מניות</button>
+    <button class="btn sm" onclick="doLogout()" title="יציאה">יציאה</button>
   </div>
 </div>
 
