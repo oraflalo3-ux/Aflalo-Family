@@ -232,11 +232,12 @@ html.app-main #config-screen { display: none !important; }
     <h2>ביתשלנו — חיבור ל-Supabase</h2>
     <p style="margin-bottom:.75rem">מ-Supabase: <strong>Project Settings → API</strong> (לא מסך Users!)</p>
     <div class="fg"><label>Project URL</label><input id="cfg-url" placeholder="https://abcdefgh.supabase.co" dir="ltr">
-      <div class="hint">חייב להסתיים ב-<span dir="ltr">.supabase.co</span></div></div>
+      <div class="hint">רק <span dir="ltr">https://xxxxx.supabase.co</span> — בלי <span dir="ltr">/rest/v1</span> ובלי <span dir="ltr">/</span> בהתחלה</div></div>
     <div class="fg"><label>Publishable key (או anon)</label><input id="cfg-key" placeholder="sb_publishable_... או eyJ..." dir="ltr" type="password">
       <div class="hint">מעתיקים מ-<span dir="ltr">API Keys → publishable</span> — <strong>לא</strong> שם משתמש ולא סיסמה</div></div>
     <p id="cfg-error" style="font-size:12px;color:var(--red);margin-bottom:.5rem;display:none"></p>
-    <button type="button" class="btn primary" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfig()">בדוק חיבור ושמור</button>
+    <button type="button" class="btn primary" id="btn-save-config" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfig()">בדוק חיבור ושמור</button>
+    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfigSkipTest()">שמור בלי בדיקה (אם נתקע)</button>
     <button type="button" class="btn sm" style="width:100%;justify-content:center" onclick="resetStoredConfig()">נקה הגדרות שמורות</button>
   </div>
 </div>
@@ -410,6 +411,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=7"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>
