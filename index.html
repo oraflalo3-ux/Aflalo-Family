@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="he" dir="rtl">
+<html lang="he" dir="rtl" class="app-login">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -195,6 +195,17 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .config-box { background: var(--bg2); border-radius: var(--radius-lg); padding: 2rem; max-width: 400px; width: 100%; border: 0.5px solid var(--border); }
 .config-box h2 { font-size: 20px; margin-bottom: .5rem; }
 .config-box p { font-size: 13px; color: var(--text2); margin-bottom: 1.5rem; line-height: 1.6; }
+
+/* מסכים — class על html (יציאה אמינה גם אם inline style נתקע) */
+html.app-login #login-screen { display: flex !important; }
+html.app-login #config-screen,
+html.app-login #main-app { display: none !important; }
+html.app-config #config-screen { display: flex !important; }
+html.app-config #login-screen,
+html.app-config #main-app { display: none !important; }
+html.app-main #main-app { display: block !important; }
+html.app-main #login-screen,
+html.app-main #config-screen { display: none !important; }
 </style>
 </head>
 <body>
@@ -234,7 +245,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
     <span id="user-label" style="font-size:11px;color:var(--text3)"></span>
     <span id="sync-indicator" style="font-size:11px;color:var(--text3)"></span>
     <button class="btn sm" onclick="refreshStocks()" title="עדכן מניות">⟳ מניות</button>
-    <button type="button" class="btn sm" id="btn-logout" title="יציאה">יציאה</button>
+    <button type="button" class="btn sm" id="btn-logout" title="יציאה" onclick="doLogout(); return false;">יציאה</button>
   </div>
 </div>
 
@@ -394,6 +405,6 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>

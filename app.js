@@ -5,8 +5,30 @@ let stockPrices = {};
 let openBlocks = {};
 let modalType = '', modalTarget = null;
 let isLoggingOut = false;
+const LOGOUT_FLAG = 'bayit_logged_out';
 
 const DEFAULT_AUTH_DOMAIN = 'bayit.local';
+
+function setAppScreen(mode) {
+  document.documentElement.classList.remove('app-login', 'app-config', 'app-main');
+  document.documentElement.classList.add('app-' + mode);
+}
+
+function clearSupabaseAuthStorage() {
+  const creds = getSupabaseCredentials();
+  let ref = '';
+  if (creds?.url) {
+    try { ref = new URL(creds.url).hostname.split('.')[0]; } catch (_) { /* ignore */ }
+  }
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const k = localStorage.key(i);
+    if (!k) continue;
+    if (k.includes('auth-token') || (k.startsWith('sb-') && k.includes('auth'))) {
+      localStorage.removeItem(k);
+    }
+    if (ref && k === `sb-${ref}-auth-token`) localStorage.removeItem(k);
+  }
+}
 
 function getAuthDomain() {
   return window.APP_CONFIG?.authEmailDomain || DEFAULT_AUTH_DOMAIN;
@@ -29,32 +51,23 @@ function getSupabaseCredentials() {
   return null;
 }
 
-function hideAllScreens() {
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('config-screen').style.display = 'none';
-  document.getElementById('main-app').style.display = 'none';
-}
-
 function showLogin(errMsg) {
-  hideAllScreens();
-  document.getElementById('login-screen').style.display = 'flex';
+  setAppScreen('login');
   const err = document.getElementById('login-error');
   if (errMsg) {
     err.textContent = errMsg;
     err.style.display = 'block';
-  } else {
+  } else if (err) {
     err.style.display = 'none';
   }
 }
 
 function showConfig() {
-  hideAllScreens();
-  document.getElementById('config-screen').style.display = 'flex';
+  setAppScreen('config');
 }
 
 function showMainApp() {
-  hideAllScreens();
-  document.getElementById('main-app').style.display = 'block';
+  setAppScreen('main');
 }
 
 function initSupabaseClient() {
@@ -99,6 +112,7 @@ async function doLogin() {
     return;
   }
   document.getElementById('login-pass').value = '';
+  sessionStorage.removeItem(LOGOUT_FLAG);
   setUserLabel(data.session);
   showMainApp();
   await init();
@@ -107,16 +121,23 @@ async function doLogin() {
 async function doLogout(loginMsg) {
   if (isLoggingOut) return;
   isLoggingOut = true;
+  sessionStorage.setItem(LOGOUT_FLAG, '1');
   try {
     const userLabel = document.getElementById('user-label');
     if (userLabel) userLabel.textContent = '';
     const passEl = document.getElementById('login-pass');
     if (passEl) passEl.value = '';
+    setAppScreen('login');
     showLogin(loginMsg || '');
 
+    clearSupabaseAuthStorage();
     if (sb) {
-      const { error } = await sb.auth.signOut();
-      if (error) console.error('signOut', error);
+      try {
+        const { error } = await sb.auth.signOut();
+        if (error) console.error('signOut', error);
+      } catch (e) {
+        console.error('signOut', e);
+      }
     }
     if (!loginMsg) toast('יצאת בהצלחה');
   } catch (e) {
@@ -127,6 +148,7 @@ async function doLogout(loginMsg) {
   }
 }
 window.doLogout = doLogout;
+window.doLogin = doLogin;
 
 // ── Config ────────────────────────────────────────────────
 async function boot() {
@@ -142,6 +164,11 @@ async function boot() {
       if (main && main.style.display !== 'none') showLogin();
     }
   });
+
+  if (sessionStorage.getItem(LOGOUT_FLAG) === '1') {
+    showLogin();
+    return;
+  }
 
   const session = await getSession();
   if (!session) {
@@ -836,21 +863,35 @@ async function saveModal() {
   } catch (e) { toast('שגיאה — נסה שוב'); console.error(e); }
 }
 
-document.getElementById('modal').addEventListener('click', e => { if (e.target === document.getElementById('modal')) closeModal(); });
-
-// Enter on login form
-document.addEventListener('DOMContentLoaded', () => {
+function bindUi() {
+  document.getElementById('modal')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal')) closeModal();
+  });
   ['login-user', 'login-pass'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => {
       if (e.key === 'Enter') doLogin();
     });
   });
-  document.getElementById('btn-logout')?.addEventListener('click', e => {
-    e.preventDefault();
-    e.stopPropagation();
-    doLogout();
-  });
-});
+  const logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn && !logoutBtn.dataset.bound) {
+    logoutBtn.dataset.bound = '1';
+    logoutBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      doLogout();
+    });
+  }
+}
 
-// ── Boot ──────────────────────────────────────────────────
-boot();
+function onReady(fn) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', fn);
+  } else {
+    fn();
+  }
+}
+
+onReady(() => {
+  bindUi();
+  boot();
+});
