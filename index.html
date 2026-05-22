@@ -72,9 +72,17 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .nav-badge { position: absolute; top: 6px; left: 50%; margin-left: 6px; background: var(--red-mid); color: #fff; border-radius: 50%; width: 15px; height: 15px; font-size: 9px; display: flex; align-items: center; justify-content: center; }
 
 /* Pages */
-.page { display: none; padding: .85rem .75rem 1rem; }
-.page.active { display: block; animation: pageIn .2s ease; }
-@keyframes pageIn { from { opacity: .6; } to { opacity: 1; } }
+.page { display: none; padding: .85rem .75rem calc(1.25rem + env(safe-area-inset-bottom)); }
+.page.active { display: block; animation: pageIn .22s ease; }
+@keyframes pageIn { from { opacity: .55; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.page-loading .app-content { pointer-events: none; }
+.page-loading .app-content::after {
+  content: ''; position: fixed; inset: 0; background: rgba(245,245,243,.55); z-index: 90;
+  backdrop-filter: blur(1px);
+}
+@media (prefers-color-scheme: dark) {
+  .page-loading .app-content::after { background: rgba(26,26,26,.5); }
+}
 
 /* Metrics — 2 columns on phone (stable, no jump) */
 .mrow { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: .85rem; min-height: 4.5rem; }
@@ -137,8 +145,62 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .cf-sec-title { font-size: 11px; font-weight: 600; color: var(--text2); margin: .65rem 0 .35rem; padding-top: .5rem; border-top: 0.5px solid var(--border); }
 .cf-sec-title:first-child { border-top: none; padding-top: 0; margin-top: 0; }
 .ov-summary-row .met.ov-hero .mv { font-size: 22px; }
+.hero-card {
+  background: linear-gradient(135deg, var(--green-light) 0%, var(--bg2) 70%);
+  border: 0.5px solid rgba(15,110,86,.2);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.1rem 1.05rem;
+  margin-bottom: .85rem;
+}
+.hero-card .hero-label { font-size: 12px; color: var(--text2); margin-bottom: 4px; }
+.hero-card .hero-value { font-size: 28px; font-weight: 700; line-height: 1.15; letter-spacing: -.02em; }
+.hero-card .hero-value.g { color: var(--green); }
+.hero-card .hero-value.r { color: var(--red); }
+.hero-card .hero-sub { font-size: 12px; color: var(--text2); margin-top: 6px; display: flex; flex-wrap: wrap; gap: .65rem; }
+.banner-shared {
+  margin: 0 0 .85rem;
+  padding: .55rem .7rem;
+  background: var(--green-light);
+  border-radius: var(--radius);
+  color: var(--green);
+  font-size: 12px;
+  line-height: 1.5;
+  border: 0.5px solid rgba(15,110,86,.15);
+}
+.sec-flex { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sec-badge {
+  font-size: 11px; font-weight: 700; background: var(--red-mid); color: #fff;
+  min-width: 20px; height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; padding: 0 6px;
+}
+.quick-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
+.quick-chip {
+  flex: 1 1 calc(50% - 4px); min-width: 8.5rem;
+  padding: 12px 14px; border-radius: var(--radius-lg); border: 0.5px solid var(--border);
+  background: var(--bg2); font-family: var(--font); font-size: 13px; font-weight: 600;
+  color: var(--text); cursor: pointer; text-align: right; touch-action: manipulation;
+  min-height: 48px; display: flex; align-items: center; gap: 8px;
+  transition: transform .12s, background .12s;
+}
+.quick-chip:active { transform: scale(.98); background: var(--bg3); }
+.quick-chip.primary-chip { background: var(--green); color: #fff; border-color: var(--green); }
+.quick-chip.primary-chip:active { background: #085041; }
+.empty-state { text-align: center; padding: 1.25rem .5rem; }
+.empty-ico { font-size: 28px; display: block; margin-bottom: 6px; }
+.empty-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.empty-sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+.btn-done {
+  background: var(--green-light) !important; color: var(--green) !important;
+  border-color: var(--green-mid) !important; font-weight: 600; min-width: 4.5rem;
+}
+.btn-done:active { background: var(--green-mid) !important; color: #fff !important; }
+.btn:active:not(:disabled) { transform: scale(.97); }
 .ov-more-details { margin-bottom: 1rem; font-size: 13px; color: var(--text2); }
-.ov-more-details summary { cursor: pointer; padding: .5rem 0; font-weight: 600; }
+.ov-more-details summary { cursor: pointer; padding: .65rem .75rem; font-weight: 600; background: var(--bg2); border-radius: var(--radius); border: 0.5px solid var(--border); }
+.cf-row { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; border-bottom: 0.5px solid var(--border); }
+.cf-row:last-child { border-bottom: none; }
+.cf-row-main { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cf-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.cf-row-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .cf-tpl-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .75rem; }
 .cf-tpl { font-size: 11px !important; min-height: 32px !important; padding: 6px 10px !important; }
 .cf-inline-amt { width: 5.5rem; padding: 6px 8px; font-size: 14px; font-weight: 600; border: 0.5px solid var(--border2); border-radius: 6px; text-align: left; direction: ltr; background: var(--bg2); }
@@ -238,6 +300,10 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
   .modal-overlay { align-items: center; padding: 1rem; }
   .modal { border-radius: var(--radius-lg); width: 360px; max-height: 90vh; padding: 1.3rem; }
 }
+.modal::before {
+  content: ''; display: block; width: 40px; height: 4px; background: var(--border2);
+  border-radius: 2px; margin: 0 auto .85rem;
+}
 .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: .9rem; }
 .fg { margin-bottom: .75rem; }
 .fg label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 3px; }
@@ -329,22 +395,23 @@ html.app-main #config-screen { display: none !important; }
     <span id="user-label" class="topbar-meta"></span>
     <span id="sync-indicator" class="topbar-meta"></span>
     <button type="button" class="btn sm" onclick="openDisplaySettings()" title="אותה תצוגה לשניכם">תצוגה</button>
-    <button type="button" class="btn sm btn-icon-text" onclick="refreshStocks()" title="עדכן מניות"><span class="btn-ico">⟳</span><span class="btn-txt">מניות</span></button>
+    <button type="button" class="btn sm btn-icon-text" onclick="refreshCurrentPage()" title="רענן נתונים"><span class="btn-ico">⟳</span><span class="btn-txt">רענן</span></button>
+    <button type="button" class="btn sm btn-icon-text" onclick="refreshStocks()" title="עדכן מניות"><span class="btn-ico">📈</span><span class="btn-txt">מניות</span></button>
     <button type="button" class="btn sm" id="btn-logout" title="יציאה" onclick="doLogout(); return false;">יציאה</button>
   </div>
 </div>
 
 <main class="app-content" id="app-content">
 <div id="page-overview" class="page active">
-  <p id="ov-shared-note" class="hint" style="margin:0 0 .75rem;padding:.5rem .65rem;background:var(--green-light);border-radius:var(--radius);color:var(--green);font-size:12px;line-height:1.5"></p>
-  <div class="sec">לטפל עכשיו</div>
+  <p id="ov-shared-note" class="banner-shared"></p>
+  <div id="ov-hero"></div>
+  <div class="sec sec-flex"><span>לטפל עכשיו</span><span id="ov-urgent-count"></span></div>
   <div class="card" id="ov-alerts"></div>
+  <div id="ov-quick" class="quick-actions"></div>
+  <div class="sec">סיכום החודש</div>
   <div id="ov-summary" class="mrow ov-summary-row"></div>
-  <div class="sec">תזרים החודש</div>
+  <div class="sec" id="ov-cf-title">תזרים החודש</div>
   <div class="card" id="ov-cf"></div>
-  <div style="margin:.5rem 0 1rem;display:flex;gap:8px;flex-wrap:wrap">
-    <button type="button" class="btn primary" onclick="goTo('finance', document.querySelector('.nav-item[data-page=finance]'))">פירוט תזרים והוצאות</button>
-  </div>
   <details class="ov-more-details">
     <summary>עוד: שווי נטו, נכסים וחובות</summary>
     <div id="ov-details" class="mrow" style="margin-top:.75rem"></div>
@@ -568,6 +635,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=26"></script>
+<script src="app.js?v=27"></script>
 </body>
 </html>
