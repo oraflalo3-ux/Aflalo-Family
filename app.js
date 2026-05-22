@@ -5,19 +5,130 @@ let stockPrices = {};
 let openBlocks = {};
 let modalType = '', modalTarget = null;
 
-// ── Config ────────────────────────────────────────────────
-function loadConfig() {
+const DEFAULT_AUTH_DOMAIN = 'bayit.local';
+
+function getAuthDomain() {
+  return window.APP_CONFIG?.authEmailDomain || DEFAULT_AUTH_DOMAIN;
+}
+
+function normalizeUsername(raw) {
+  const u = raw.trim().toLowerCase();
+  if (!u) return '';
+  return u.includes('@') ? u : `${u}@${getAuthDomain()}`;
+}
+
+function getSupabaseCredentials() {
+  const cfg = window.APP_CONFIG;
+  if (cfg?.supabaseUrl && cfg?.supabaseAnonKey) {
+    return { url: cfg.supabaseUrl.trim(), key: cfg.supabaseAnonKey.trim() };
+  }
   const url = localStorage.getItem('sb_url');
   const key = localStorage.getItem('sb_key');
-  if (url && key) {
-    sb = supabase.createClient(url, key);
-    document.getElementById('config-screen').style.display = 'none';
-    document.getElementById('main-app').style.display = 'block';
-    init();
+  if (url && key) return { url: url.trim(), key: key.trim() };
+  return null;
+}
+
+function hideAllScreens() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('config-screen').style.display = 'none';
+  document.getElementById('main-app').style.display = 'none';
+}
+
+function showLogin(errMsg) {
+  hideAllScreens();
+  document.getElementById('login-screen').style.display = 'flex';
+  const err = document.getElementById('login-error');
+  if (errMsg) {
+    err.textContent = errMsg;
+    err.style.display = 'block';
   } else {
-    document.getElementById('config-screen').style.display = 'flex';
-    document.getElementById('main-app').style.display = 'none';
+    err.style.display = 'none';
   }
+}
+
+function showConfig() {
+  hideAllScreens();
+  document.getElementById('config-screen').style.display = 'flex';
+}
+
+function showMainApp() {
+  hideAllScreens();
+  document.getElementById('main-app').style.display = 'block';
+}
+
+function initSupabaseClient() {
+  const creds = getSupabaseCredentials();
+  if (!creds) {
+    sb = null;
+    return false;
+  }
+  sb = supabase.createClient(creds.url, creds.key);
+  return true;
+}
+
+async function getSession() {
+  if (!sb) return null;
+  const { data: { session } } = await sb.auth.getSession();
+  return session;
+}
+
+function setUserLabel(session) {
+  const el = document.getElementById('user-label');
+  if (!el || !session?.user?.email) return;
+  const local = session.user.email.split('@')[0];
+  el.textContent = local;
+}
+
+// ── Auth ──────────────────────────────────────────────────
+async function doLogin() {
+  const email = normalizeUsername(gv('login-user'));
+  const password = gv('login-pass');
+  if (!email || !password) return showLogin('הכנס שם משתמש וסיסמה');
+  if (!sb && !initSupabaseClient()) return showConfig();
+
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) {
+    const msg = error.message.includes('Invalid login')
+      ? 'שם משתמש או סיסמה שגויים'
+      : (error.message.includes('Email not confirmed') ? 'אשר את המייל ב-Supabase' : 'שגיאת התחברות — נסה שוב');
+    showLogin(msg);
+    return;
+  }
+  document.getElementById('login-pass').value = '';
+  setUserLabel(data.session);
+  showMainApp();
+  await init();
+}
+
+async function doLogout() {
+  if (sb) await sb.auth.signOut();
+  showLogin();
+}
+
+// ── Config ────────────────────────────────────────────────
+async function boot() {
+  if (!initSupabaseClient()) {
+    showConfig();
+    return;
+  }
+
+  sb.auth.onAuthStateChange((_event, session) => {
+    if (!session && document.getElementById('main-app').style.display !== 'none') {
+      showLogin();
+    }
+  });
+
+  const session = await getSession();
+  if (!session) {
+    showLogin();
+    return;
+  }
+  setUserLabel(session);
+  showMainApp();
+  await init();
 }
 
 function saveConfig() {
@@ -26,7 +137,7 @@ function saveConfig() {
   if (!url || !key) return toast('הכנס URL ו-Key');
   localStorage.setItem('sb_url', url);
   localStorage.setItem('sb_key', key);
-  loadConfig();
+  boot();
 }
 
 // ── Init ─────────────────────────────────────────────────
@@ -94,7 +205,14 @@ function dueLabel(days) {
 // ── Data fetchers ─────────────────────────────────────────
 async function fetch_(table, order = 'created_at') {
   const { data, error } = await sb.from(table).select('*').order(order);
-  if (error) { console.error(table, error); return []; }
+  if (error) {
+    console.error(table, error);
+    if (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('row-level')) {
+      await doLogout();
+      showLogin('התחברות פגה — התחבר שוב');
+    }
+    return [];
+  }
   return data || [];
 }
 
@@ -699,5 +817,14 @@ async function saveModal() {
 
 document.getElementById('modal').addEventListener('click', e => { if (e.target === document.getElementById('modal')) closeModal(); });
 
+// Enter on login form
+document.addEventListener('DOMContentLoaded', () => {
+  ['login-user', 'login-pass'].forEach(id => {
+    document.getElementById(id)?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+  });
+});
+
 // ── Boot ──────────────────────────────────────────────────
-loadConfig();
+boot();
