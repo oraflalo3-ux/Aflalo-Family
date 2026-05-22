@@ -130,6 +130,7 @@ function persistSupabaseConfig(url, key) {
     throw e;
   }
   initSupabaseClient();
+  updateConnectionBadge();
   sessionStorage.removeItem(LOGOUT_FLAG);
 }
 
@@ -210,6 +211,22 @@ function setUserLabel(session) {
   if (!el || !session?.user?.email) return;
   const local = session.user.email.split('@')[0];
   el.textContent = local;
+}
+
+function updateConnectionBadge() {
+  const el = document.getElementById('conn-badge');
+  const creds = getSupabaseCredentials();
+  if (!el || !creds?.url) {
+    if (el) el.textContent = '';
+    return;
+  }
+  try {
+    const ref = new URL(creds.url).hostname.split('.')[0];
+    el.textContent = ref;
+    el.title = 'מחובר ל-Supabase: ' + creds.url + '\nאם לא תואם למחשב השני — אותו URL ומפתח בשניהם';
+  } catch (_) {
+    el.textContent = '';
+  }
 }
 
 // ── Auth ──────────────────────────────────────────────────
@@ -322,6 +339,7 @@ async function boot() {
     return;
   }
   setUserLabel(session);
+  updateConnectionBadge();
   showMainApp();
   await init();
 }
@@ -897,8 +915,34 @@ async function toggleDone(table, id, val) {
   await sb.from(table).update({ [field]: val }).eq('id', id);
 }
 
+const DELETE_CONFIRM = {
+  loans: 'למחוק הלוואה זו?',
+  credit_cards: 'למחוק כרטיס אשראי זה?',
+  cashflow: 'למחוק פריט תזרים זה?',
+  savings_cats: 'למחוק קטגוריה זו וכל מה שבתוכה?',
+  savings_accounts: 'למחוק חשבון זה?',
+  savings_stocks: 'למחוק מניה זו?',
+  savings_loans: 'למחוק הלוואה על נכס זה?',
+  properties: 'למחוק נכס זה?',
+  property_expenses: 'למחוק הוצאה זו?',
+  cars: 'למחוק רכב זה?',
+  car_events: 'למחוק אירוע זה?',
+  shopping: 'למחוק פריט מהרשימה?',
+  activities: 'למחוק חוג זה?',
+  tasks: 'למחוק משימה זו?',
+  reminders: 'למחוק תזכורת זו?',
+  alert_defs: 'למחוק התראה זו?'
+};
+
 async function del(table, id, refresh = false) {
-  await sb.from(table).delete().eq('id', id);
+  const msg = DELETE_CONFIRM[table] || 'למחוק פריט זה?';
+  if (!confirm(msg + '\n\nלא ניתן לשחזר.')) return;
+  const { error } = await sb.from(table).delete().eq('id', id);
+  if (error) {
+    toast('שגיאה במחיקה');
+    console.error('del', table, error);
+    return;
+  }
   toast('נמחק');
   if (refresh) {
     const page = document.querySelector('.page.active')?.id?.replace('page-', '');
@@ -908,26 +952,57 @@ async function del(table, id, refresh = false) {
 }
 
 // ── Stocks ────────────────────────────────────────────────
+function normalizeStockSymbol(raw) {
+  return (raw || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+async function fetchYahooPrice(sym) {
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`;
+  const attempts = [
+    yahooUrl,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`
+  ];
+  for (const url of attempts) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) continue;
+      let d;
+      if (url.includes('allorigins.win')) {
+        const wrap = await r.json();
+        d = JSON.parse(wrap.contents);
+      } else {
+        d = await r.json();
+      }
+      const meta = d?.chart?.result?.[0]?.meta;
+      const price = meta?.regularMarketPrice ?? meta?.previousClose;
+      if (price == null) continue;
+      const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
+      return { price, chg: prev ? ((price - prev) / prev * 100) : 0 };
+    } catch (e) {
+      console.warn('fetchYahooPrice', sym, e);
+    }
+  }
+  return null;
+}
+
+async function applyStockPrice(sym) {
+  const px = await fetchYahooPrice(sym);
+  if (!px) return false;
+  stockPrices[sym] = px.price;
+  const { error } = await sb.from('savings_stocks').update({ change_pct: px.chg }).eq('symbol', sym);
+  if (error) console.warn('change_pct update', sym, error);
+  return true;
+}
+
 async function refreshStocks() {
   setSyncStatus('מעדכן מניות...');
   const stocks = await fetch_('savings_stocks');
-  const syms = [...new Set(stocks.map(s => s.symbol))];
+  const syms = [...new Set(stocks.map(s => s.symbol).filter(Boolean))];
+  let ok = 0;
   for (const sym of syms) {
-    try {
-      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2d`);
-      if (!r.ok) continue;
-      const d = await r.json();
-      const meta = d?.chart?.result?.[0]?.meta;
-      if (meta) {
-        const price = meta.regularMarketPrice || meta.previousClose;
-        const prev = meta.chartPreviousClose || meta.previousClose;
-        const chg = prev ? ((price - prev) / prev * 100) : 0;
-        stockPrices[sym] = price;
-        await sb.from('savings_stocks').update({ change_pct: chg }).eq('symbol', sym);
-      }
-    } catch (e) { }
+    if (await applyStockPrice(sym)) ok++;
   }
-  setSyncStatus('מסונכרן ✓');
+  setSyncStatus(syms.length ? (ok ? 'מסונכרן ✓' : 'מחיר לא זמין') : 'מסונכרן ✓');
   const page = document.querySelector('.page.active')?.id?.replace('page-', '');
   if (page === 'savings') renderSavings();
   if (page === 'overview') renderOverview();
@@ -969,10 +1044,10 @@ const forms = {
     <div class="fg"><label>סכום (₪)</label><input id="f2" type="number" placeholder="0"></div>
     <div class="fg"><label>יעד (₪)</label><input id="f3" type="number" placeholder="0"></div>
     <div class="fg"><label>הערה</label><input id="f4" placeholder="ריבית, תנאים..."></div>`,
-  sstk: `<div class="fg"><label>סימול</label><input id="f1" placeholder="AAPL, TEVA.TA...">
-    <div class="hint">בורסת ת"א: הוסף .TA</div></div>
-    <div class="fg"><label>שם תיאורי</label><input id="f2" placeholder="Apple..."></div>
-    <div class="fg"><label>כמות יחידות</label><input id="f3" type="number" step="0.01" placeholder="10"></div>`,
+  sstk: `<div class="fg"><label>סימול (באנגלית)</label><input id="f1" placeholder="TEVA.TA או AAPL" dir="ltr" autocomplete="off" autocapitalize="off">
+    <div class="hint">בורסת ת"א: חובה סיום <span dir="ltr">.TA</span> (למשל <span dir="ltr">TEVA.TA</span>). ארה"ב: <span dir="ltr">AAPL</span>, <span dir="ltr">MSFT</span></div></div>
+    <div class="fg"><label>שם תיאורי</label><input id="f2" placeholder="טבע, אפל..."></div>
+    <div class="fg"><label>כמות יחידות</label><input id="f3" type="number" step="0.0001" min="0.0001" inputmode="decimal" placeholder="10"></div>`,
   sloan: `<div class="modal-sec">הלוואה מגובת נכס (מינוף)</div>
     <div class="fg"><label>שם</label><input id="f1" placeholder="הלוואה על קרן..."></div>
     <div class="fg"><label>יתרה (₪)</label><input id="f2" type="number" placeholder="0"></div>
@@ -1038,7 +1113,23 @@ async function saveModal() {
     else if (t === 'cf') await sb.from('cashflow').insert({ name: gv('f1'), amount: +gv('f2') || 0, type: gv('f3') });
     else if (t === 'scat') await sb.from('savings_cats').insert({ name: gv('f1'), icon: gv('f2') || '💰', color: cols[gv('f3')] || '#F1EFE8', type: gv('f3'), display_order: 99 });
     else if (t === 'sacc') await sb.from('savings_accounts').insert({ cat_id: tgt, name: gv('f1'), amount: +gv('f2') || 0, goal: +gv('f3') || 0, note: gv('f4') });
-    else if (t === 'sstk') await sb.from('savings_stocks').insert({ cat_id: tgt, symbol: gv('f1').toUpperCase(), name: gv('f2'), units: +gv('f3') || 1 });
+    else if (t === 'sstk') {
+      const symbol = normalizeStockSymbol(gv('f1'));
+      const units = parseFloat(gv('f3'));
+      if (!symbol) { toast('הכנס סימול מניה'); return; }
+      if (!units || units <= 0) { toast('הכנס כמות יחידות (מעל 0)'); return; }
+      const { error } = await sb.from('savings_stocks').insert({
+        cat_id: tgt, symbol, name: gv('f2') || symbol, units
+      });
+      if (error) {
+        toast(error.message.includes('duplicate') ? 'מניה זו כבר קיימת' : 'שגיאה בשמירה');
+        console.error('sstk insert', error);
+        return;
+      }
+      openBlocks['cat_' + tgt] = true;
+      const priceOk = await applyStockPrice(symbol);
+      toast(priceOk ? '✓ מניה נשמרה' : '✓ נשמר — לחץ ⟳ מניות לעדכון מחיר');
+    }
     else if (t === 'sloan') await sb.from('savings_loans').insert({ cat_id: tgt, name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, rate: +gv('f4') || 0, note: gv('f5') });
     else if (t === 'prop' || t === 'prop_edit') {
       const data = { name: gv('f1'), address: gv('f2'), icon: gv('f_icon') || '🏠', is_rented: gv('f_rented') === '1', value: +gv('f3') || 0, mortgage: +gv('f4') || 0, monthly_mortgage: +gv('f5') || 0, monthly_expenses: +gv('f6') || 0, rental_income: +gv('f7') || 0, last_valuation_date: gv('f8') };
@@ -1054,12 +1145,11 @@ async function saveModal() {
     else if (t === 'rem') await sb.from('reminders').insert({ text: gv('f1'), reminder_date: gv('f2'), who: gv('f3') || 'שניהם' });
     else if (t === 'alert') await sb.from('alert_defs').insert({ name: gv('f1'), category: gv('f2'), freq: gv('f3'), next_date: gv('f4') || new Date().toISOString().split('T')[0] });
 
-    toast('✓ נשמר');
+    if (t !== 'sstk') toast('✓ נשמר');
     closeModal();
     const page = document.querySelector('.page.active')?.id?.replace('page-', '');
     if (page) renderPage(page);
     renderOverview();
-    if (t === 'sstk') refreshStocks();
   } catch (e) { toast('שגיאה — נסה שוב'); console.error(e); }
 }
 

@@ -8,36 +8,20 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>משפחת אפללו</title>
 <link rel="apple-touch-icon" href="icon.svg">
-<link rel="manifest" href="manifest.json" id="app-manifest">
+<!-- בלי manifest: באייפון "הוסף למסך הבית" שומר את הכתובת הנוכחית (נכון). manifest גרם ל-404 -->
 <script>
 (function () {
   var path = location.pathname;
   var dir = path.endsWith('/') ? path : path.replace(/\/[^/]*$/, '/');
-  if (!dir || dir === '/') dir = '/bayit-shelanu/';
-  var base = location.origin + dir;
-  var start = base + 'index.html';
+  var base = location.origin + (dir || '/');
   window.__APP_BASE__ = base;
-  if (window.navigator.standalone && !path.includes('bayit-shelanu')) {
-    location.replace(start);
-    return;
+  var appPath = '/bayit-shelanu/';
+  var appUrl = location.origin + appPath + 'index.html';
+  if ((window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches)
+      && location.hostname.endsWith('github.io')
+      && !path.includes('bayit-shelanu')) {
+    location.replace(appUrl);
   }
-  var manifest = {
-    name: 'משפחת אפללו',
-    short_name: 'משפחת אפללו',
-    description: 'משפחת אפללו — ניהול פיננסי משפחתי',
-    start_url: start,
-    scope: base,
-    display: 'standalone',
-    background_color: '#F5F5F3',
-    theme_color: '#0F6E56',
-    dir: 'rtl',
-    lang: 'he',
-    icons: [{ src: base + 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
-  };
-  var link = document.getElementById('app-manifest');
-  try {
-    link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }));
-  } catch (e) { /* manifest.json */ }
 })();
 </script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.8/dist/umd/supabase.min.js"></script>
@@ -307,6 +291,7 @@ html.app-main #config-screen { display: none !important; }
 <div class="topbar">
   <div class="logo">משפחת <span>אפללו</span></div>
   <div class="topbar-actions">
+    <span id="conn-badge" class="topbar-meta" title="פרויקט Supabase"></span>
     <span id="user-label" class="topbar-meta"></span>
     <span id="sync-indicator" class="topbar-meta"></span>
     <button type="button" class="btn sm btn-icon-text" onclick="refreshStocks()" title="עדכן מניות"><span class="btn-ico">⟳</span><span class="btn-txt">מניות</span></button>
@@ -470,6 +455,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=12"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
