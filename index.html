@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl" class="app-login">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="משפחת אפללו">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -61,31 +61,39 @@
     --border: rgba(255,255,255,0.1); --border2: rgba(255,255,255,0.2);
   }
 }
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; direction: rtl; }
-.app { display: flex; flex-direction: column; min-height: 100vh; }
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { height: 100%; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 15px; direction: rtl; line-height: 1.45; }
+html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+.app { display: flex; flex-direction: column; height: 100dvh; height: 100vh; max-height: 100dvh; overflow: hidden; }
 
 /* Topbar */
-.topbar { background: var(--bg2); border-bottom: 0.5px solid var(--border); padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }
-.logo { font-size: 16px; font-weight: 600; } .logo span { color: var(--green); }
+.topbar { background: var(--bg2); border-bottom: 0.5px solid var(--border); padding: 0 .75rem; padding-top: env(safe-area-inset-top); display: flex; align-items: center; justify-content: space-between; min-height: 48px; flex-shrink: 0; z-index: 100; }
+.topbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.logo { font-size: 15px; font-weight: 600; white-space: nowrap; } .logo span { color: var(--green); }
 .alert-count { background: var(--red-mid); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; margin-right: 4px; }
 
-/* Bottom nav (mobile) */
-.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg2); border-top: 0.5px solid var(--border); display: flex; z-index: 100; padding-bottom: env(safe-area-inset-bottom); }
-.nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; cursor: pointer; border: none; background: none; color: var(--text2); font-family: var(--font); font-size: 10px; gap: 3px; transition: color .15s; position: relative; }
-.nav-item.active { color: var(--green); }
-.nav-item svg { width: 22px; height: 22px; }
-.nav-badge { position: absolute; top: 4px; right: calc(50% - 18px); background: var(--red-mid); color: #fff; border-radius: 50%; width: 15px; height: 15px; font-size: 9px; display: flex; align-items: center; justify-content: center; }
+/* Main scroll area */
+.app-content { flex: 1; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-y: contain; scroll-behavior: smooth; }
+
+/* Bottom nav */
+.bottom-nav { flex-shrink: 0; background: var(--bg2); border-top: 0.5px solid var(--border); display: flex; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; scrollbar-width: none; z-index: 100; padding-bottom: env(safe-area-inset-bottom); }
+.bottom-nav::-webkit-scrollbar { display: none; }
+.nav-item { flex: 0 0 auto; min-width: 4.25rem; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px 8px 8px; cursor: pointer; border: none; background: none; color: var(--text2); font-family: var(--font); font-size: 10px; gap: 4px; position: relative; touch-action: manipulation; min-height: 56px; }
+.nav-item.active { color: var(--green); font-weight: 600; }
+.nav-item svg { width: 22px; height: 22px; flex-shrink: 0; }
+.nav-badge { position: absolute; top: 6px; left: 50%; margin-left: 6px; background: var(--red-mid); color: #fff; border-radius: 50%; width: 15px; height: 15px; font-size: 9px; display: flex; align-items: center; justify-content: center; }
 
 /* Pages */
-.page { display: none; padding: 1rem; padding-bottom: 80px; }
-.page.active { display: block; }
+.page { display: none; padding: .85rem .75rem 1rem; }
+.page.active { display: block; animation: pageIn .2s ease; }
+@keyframes pageIn { from { opacity: .6; } to { opacity: 1; } }
 
-/* Metrics */
-.mrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 1rem; }
+/* Metrics — 2 columns on phone (stable, no jump) */
+.mrow { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: .85rem; min-height: 4.5rem; }
 .met { background: var(--bg3); border-radius: var(--radius); padding: .75rem .9rem; }
 .ml { font-size: 11px; color: var(--text2); margin-bottom: 3px; }
-.mv { font-size: 19px; font-weight: 600; }
+.mv { font-size: 17px; font-weight: 600; word-break: break-word; }
 .mv.g { color: var(--green); } .mv.r { color: var(--red); } .mv.b { color: var(--blue); } .mv.am { color: var(--amber); }
 .ms { font-size: 11px; color: var(--text3); margin-top: 1px; }
 
@@ -95,11 +103,11 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .card-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
 
 /* Buttons */
-.btn { border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 6px 12px; font-size: 13px; cursor: pointer; background: none; color: var(--text2); font-family: var(--font); display: inline-flex; align-items: center; gap: 4px; transition: background .15s; }
+.btn { border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 10px 14px; font-size: 14px; cursor: pointer; background: none; color: var(--text2); font-family: var(--font); display: inline-flex; align-items: center; justify-content: center; gap: 4px; transition: background .15s; touch-action: manipulation; min-height: 44px; }
+.btn.sm { padding: 8px 10px; font-size: 12px; min-height: 36px; }
 .btn:hover { background: var(--bg3); }
 .btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
 .btn.primary:hover { background: #085041; }
-.btn.sm { padding: 3px 8px; font-size: 11px; }
 .btn.danger { color: var(--red); }
 .btn.icon-only { padding: 4px; border: none; color: var(--text3); }
 .btn.icon-only:hover { color: var(--red); background: var(--red-light); }
@@ -140,7 +148,7 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 
 /* Collapsible blocks */
 .block { background: var(--bg2); border: 0.5px solid var(--border); border-radius: var(--radius-lg); margin-bottom: .75rem; overflow: hidden; }
-.block-hdr { display: flex; align-items: center; gap: 9px; padding: .8rem 1rem; cursor: pointer; user-select: none; transition: background .15s; }
+.block-hdr { display: flex; align-items: center; gap: 9px; padding: .85rem 1rem; cursor: pointer; user-select: none; transition: background .15s; min-height: 52px; touch-action: manipulation; }
 .block-hdr:hover { background: var(--bg3); }
 .block-icon { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
 .block-body { border-top: 0.5px solid var(--border); display: none; }
@@ -201,32 +209,39 @@ body { font-family: var(--font); background: var(--bg); color: var(--text); font
 .spinner { width: 18px; height: 18px; border: 2px solid var(--border2); border-top-color: var(--green); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Two col */
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
-@media (max-width: 540px) { .two { grid-template-columns: 1fr; } }
+/* Two col — single column on mobile */
+.two { display: flex; flex-direction: column; gap: .75rem; }
+@media (min-width: 720px) {
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+  .mrow { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+}
 
 /* Empty */
 .empty { font-size: 12px; color: var(--text3); padding: 6px 0; }
 
 /* Modal */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 500; align-items: center; justify-content: center; padding: 1rem; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 500; align-items: flex-end; justify-content: center; padding: 0; }
 .modal-overlay.open { display: flex; }
-.modal { background: var(--bg2); border-radius: var(--radius-lg); padding: 1.3rem; width: 360px; max-width: 100%; border: 0.5px solid var(--border); max-height: 90vh; overflow-y: auto; }
+.modal { background: var(--bg2); border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 1.2rem 1rem calc(1.2rem + env(safe-area-inset-bottom)); width: 100%; max-width: 100%; border: 0.5px solid var(--border); max-height: 88dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+@media (min-width: 720px) {
+  .modal-overlay { align-items: center; padding: 1rem; }
+  .modal { border-radius: var(--radius-lg); width: 360px; max-height: 90vh; padding: 1.3rem; }
+}
 .modal h3 { font-size: 15px; font-weight: 600; margin-bottom: .9rem; }
 .fg { margin-bottom: .75rem; }
 .fg label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 3px; }
-.fg input, .fg select { width: 100%; padding: 8px 10px; border-radius: var(--radius); border: 0.5px solid var(--border2); font-size: 13px; font-family: var(--font); background: var(--bg2); color: var(--text); direction: rtl; }
+.fg input, .fg select { width: 100%; padding: 12px 10px; border-radius: var(--radius); border: 0.5px solid var(--border2); font-size: 16px; font-family: var(--font); background: var(--bg2); color: var(--text); direction: rtl; }
 .fg input:focus, .fg select:focus { outline: 2px solid var(--green); outline-offset: -1px; }
 .modal-sec { font-size: 11px; font-weight: 600; color: var(--text2); margin: .85rem 0 .4rem; padding-bottom: 3px; border-bottom: 0.5px solid var(--border); text-transform: uppercase; letter-spacing: .04em; }
 .modal-actions { display: flex; gap: 7px; justify-content: flex-end; margin-top: .9rem; }
 .hint { font-size: 11px; color: var(--text3); margin-top: 3px; }
 
 /* Toast */
-.toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #1a1a1a; color: #fff; padding: 8px 18px; border-radius: 20px; font-size: 13px; z-index: 600; opacity: 0; transition: opacity .3s; pointer-events: none; }
+.toast { position: fixed; bottom: calc(4.5rem + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: #1a1a1a; color: #fff; padding: 10px 18px; border-radius: 20px; font-size: 14px; z-index: 600; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 90vw; text-align: center; }
 .toast.show { opacity: 1; }
 
 /* Config screen */
-.config-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
+.config-screen { display: flex; align-items: center; justify-content: center; min-height: 100dvh; min-height: 100vh; padding: 1rem; padding-top: calc(1rem + env(safe-area-inset-top)); padding-bottom: calc(1rem + env(safe-area-inset-bottom)); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .config-box { background: var(--bg2); border-radius: var(--radius-lg); padding: 2rem; max-width: 400px; width: 100%; border: 0.5px solid var(--border); }
 .config-box h2 { font-size: 20px; margin-bottom: .5rem; }
 .config-box p { font-size: 13px; color: var(--text2); margin-bottom: 1.5rem; line-height: 1.6; }
@@ -238,9 +253,18 @@ html.app-login #main-app { display: none !important; }
 html.app-config #config-screen { display: flex !important; }
 html.app-config #login-screen,
 html.app-config #main-app { display: none !important; }
-html.app-main #main-app { display: block !important; }
+html.app-main #main-app { display: flex !important; flex-direction: column; height: 100dvh; height: 100vh; overflow: hidden; }
 html.app-main #login-screen,
 html.app-main #config-screen { display: none !important; }
+.topbar-meta { font-size: 10px; color: var(--text3); max-width: 4.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 380px) {
+  .topbar-meta, #user-label { display: none; }
+  .btn-icon-text .btn-txt { display: none; }
+  .btn-icon-text { min-width: 40px; padding: 8px; }
+}
+.row { padding: 10px 0; gap: 8px; }
+.card-header { flex-wrap: wrap; gap: 8px; }
+.icon-only, .btn.icon-only { min-width: 40px; min-height: 40px; }
 </style>
 </head>
 <body>
@@ -282,15 +306,15 @@ html.app-main #config-screen { display: none !important; }
 <div class="app">
 <div class="topbar">
   <div class="logo">משפחת <span>אפללו</span></div>
-  <div style="display:flex;align-items:center;gap:8px">
-    <span id="user-label" style="font-size:11px;color:var(--text3)"></span>
-    <span id="sync-indicator" style="font-size:11px;color:var(--text3)"></span>
-    <button class="btn sm" onclick="refreshStocks()" title="עדכן מניות">⟳ מניות</button>
+  <div class="topbar-actions">
+    <span id="user-label" class="topbar-meta"></span>
+    <span id="sync-indicator" class="topbar-meta"></span>
+    <button type="button" class="btn sm btn-icon-text" onclick="refreshStocks()" title="עדכן מניות"><span class="btn-ico">⟳</span><span class="btn-txt">מניות</span></button>
     <button type="button" class="btn sm" id="btn-logout" title="יציאה" onclick="doLogout(); return false;">יציאה</button>
   </div>
 </div>
 
-<!-- Pages -->
+<main class="app-content" id="app-content">
 <div id="page-overview" class="page active">
   <div id="ov-summary" class="mrow"></div>
   <div class="two">
@@ -396,9 +420,9 @@ html.app-main #config-screen { display: none !important; }
     <button class="btn primary" onclick="shareWA()">📲 שתף בוואטסאפ</button>
   </div>
 </div>
+</main>
 
-<!-- Bottom Nav -->
-<nav class="bottom-nav">
+<nav class="bottom-nav" aria-label="ניווט ראשי">
   <button class="nav-item active" onclick="goTo('overview',this)" data-page="overview">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
     סקירה
@@ -446,6 +470,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

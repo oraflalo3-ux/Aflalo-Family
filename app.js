@@ -178,6 +178,9 @@ function showConfig() {
 
 function showMainApp() {
   setAppScreen('main');
+  requestAnimationFrame(() => {
+    document.getElementById('app-content')?.scrollTo(0, 0);
+  });
 }
 
 function initSupabaseClient() {
@@ -378,10 +381,15 @@ window.saveConfigSkipTest = () => saveConfig(true);
 
 // ── Init ─────────────────────────────────────────────────
 async function init() {
-  setSyncStatus('טוען...');
-  await Promise.all([renderAll()]);
-  refreshStocks();
-  setSyncStatus('מסונכרן ✓');
+  setSyncStatus('טוען');
+  try {
+    await Promise.all([renderAll()]);
+    refreshStocks();
+    setSyncStatus('✓');
+  } catch (e) {
+    console.error('init', e);
+    setSyncStatus('שגיאה');
+  }
 }
 
 function setSyncStatus(txt) {
@@ -389,12 +397,17 @@ function setSyncStatus(txt) {
 }
 
 // ── Navigation ────────────────────────────────────────────
+let navBusy = false;
+
 function goTo(page, btn) {
+  if (navBusy) return;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
-  document.getElementById('page-' + page).classList.add('active');
-  btn.classList.add('active');
-  renderPage(page);
+  document.getElementById('page-' + page)?.classList.add('active');
+  if (btn) btn.classList.add('active');
+  document.getElementById('app-content')?.scrollTo({ top: 0, behavior: 'instant' });
+  navBusy = true;
+  Promise.resolve(renderPage(page)).finally(() => { navBusy = false; });
 }
 
 async function renderPage(page) {
