@@ -3,6 +3,7 @@
 let sb = null;
 let stockPrices = {};
 let openBlocks = {};
+let cfHistoryYear = null;
 let modalType = '', modalTarget = null;
 let isLoggingOut = false;
 const LOGOUT_FLAG = 'bayit_logged_out';
@@ -469,6 +470,174 @@ function dueLabel(days) {
   return `${days} יום`;
 }
 
+const MONTH_NAMES_HE = ['', 'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+
+function getIsraelYearMonth() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jerusalem',
+    year: 'numeric',
+    month: 'numeric'
+  }).formatToParts(new Date());
+  return {
+    year: +parts.find(p => p.type === 'year').value,
+    month: +parts.find(p => p.type === 'month').value
+  };
+}
+
+function calcCashflowTotals(cf, props) {
+  const cfInc = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0);
+  const cfExp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0);
+  const propInc = (props || []).reduce((a, p) => a + Number(p.rental_income || 0), 0);
+  const propExp = (props || []).reduce((a, p) => a + Number(p.monthly_mortgage || 0) + Number(p.monthly_expenses || 0), 0);
+  const income = cfInc + propInc;
+  const expense = cfExp + propExp;
+  return { income, expense, net: income - expense };
+}
+
+async function fetchCashflowMonthly() {
+  const { data, error } = await sb.from('cashflow_monthly').select('*');
+  if (error) {
+    console.error('cashflow_monthly', error);
+    if (!isLoggingOut && (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('row-level'))) {
+      await doLogout('התחברות פגה — התחבר שוב');
+    }
+    return [];
+  }
+  return (data || []).sort((a, b) => b.year - a.year || b.month - a.month);
+}
+
+async function saveCashflowMonthSnapshot(year, month) {
+  const [cf, props] = await Promise.all([fetch_('cashflow'), fetch_('properties')]);
+  const t = calcCashflowTotals(cf, props);
+  const { error } = await sb.from('cashflow_monthly').upsert({
+    year,
+    month,
+    income_total: t.income,
+    expense_total: t.expense,
+    note: `נסגר ${new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' })}`
+  }, { onConflict: 'year,month' });
+  if (error) {
+    if (error.message?.includes('cashflow_monthly') || error.code === 'PGRST205') {
+      toast('חסרה טבלת יומן — הרץ cashflow-history-migration.sql ב-Supabase');
+    } else {
+      toast('שגיאה בשמירה: ' + (error.message || error.code));
+    }
+    console.error('saveCashflowMonthSnapshot', error);
+    return false;
+  }
+  return t;
+}
+
+async function closeCashflowMonth(year, month) {
+  if (!sb) { toast('לא מחובר'); return; }
+  const y = year ?? getIsraelYearMonth().year;
+  const m = month ?? getIsraelYearMonth().month;
+  const [cf, props] = await Promise.all([fetch_('cashflow'), fetch_('properties')]);
+  const t = calcCashflowTotals(cf, props);
+  const label = `${MONTH_NAMES_HE[m]} ${y}`;
+  const rows = await fetchCashflowMonthly();
+  const exists = rows.some(r => r.year === y && r.month === m);
+  const msg = `${exists ? 'לעדכן' : 'לשמור'} סיכום ${label}?\n\nהכנסות: ₪${fmt(t.income)}\nהוצאות: ₪${fmt(t.expense)}\nנטו: ₪${fmt(t.net)}\n\n(כולל תזרים + נדל״ן)`;
+  if (!confirm(msg)) return;
+  const ok = await saveCashflowMonthSnapshot(y, m);
+  if (!ok) return;
+  cfHistoryYear = y;
+  toast(`✓ נשמר — ${label}`);
+  await renderFinance();
+}
+
+function setCfHistoryYear(y) {
+  cfHistoryYear = y;
+  renderCashflowHistoryOnly();
+}
+
+async function renderCashflowHistoryOnly() {
+  const [rows, cf, props] = await Promise.all([
+    fetchCashflowMonthly(),
+    fetch_('cashflow'),
+    fetch_('properties')
+  ]);
+  const { year: curY, month: curM } = getIsraelYearMonth();
+  const minY = rows.length ? Math.min(...rows.map(r => r.year)) : curY;
+  const maxY = Math.max(curY, 2028, rows.length ? Math.max(...rows.map(r => r.year)) : curY);
+  const startY = Math.min(minY, 2026);
+  const years = [];
+  for (let y = maxY; y >= startY; y--) years.push(y);
+  if (!cfHistoryYear || !years.includes(cfHistoryYear)) cfHistoryYear = curY;
+
+  el('cf-history-years', years.map(y =>
+    `<button type="button" class="year-pill ${y === cfHistoryYear ? 'active' : ''}" onclick="setCfHistoryYear(${y})">${y}</button>`
+  ).join(''));
+
+  const yearRows = rows.filter(r => r.year === cfHistoryYear);
+  const draft = cfHistoryYear === curY ? calcCashflowTotals(cf, props) : null;
+
+  let yInc = 0;
+  let yExp = 0;
+  const bodyRows = [];
+  for (let m = 1; m <= 12; m++) {
+    const rec = yearRows.find(r => r.month === m);
+    if (rec) {
+      const net = Number(rec.income_total) - Number(rec.expense_total);
+      yInc += Number(rec.income_total);
+      yExp += Number(rec.expense_total);
+      bodyRows.push(`<tr>
+        <td>${MONTH_NAMES_HE[m]}</td>
+        <td class="g">₪${fmt(rec.income_total)}</td>
+        <td class="r">₪${fmt(rec.expense_total)}</td>
+        <td class="${net >= 0 ? 'g' : 'r'}">₪${fmt(net)}</td>
+        <td><button type="button" class="btn icon-only" onclick="del('cashflow_monthly','${rec.id}',true)" title="מחק סיכום">🗑</button></td>
+      </tr>`);
+    } else if (cfHistoryYear === curY && m === curM && draft) {
+      bodyRows.push(`<tr class="hist-draft">
+        <td>${MONTH_NAMES_HE[m]} <span class="badge gy">טיוטה</span></td>
+        <td class="g">₪${fmt(draft.income)}</td>
+        <td class="r">₪${fmt(draft.expense)}</td>
+        <td class="${draft.net >= 0 ? 'g' : 'r'}">₪${fmt(draft.net)}</td>
+        <td><button type="button" class="btn sm" onclick="closeCashflowMonth()">סגור</button></td>
+      </tr>`);
+    } else {
+      bodyRows.push(`<tr class="hist-empty"><td>${MONTH_NAMES_HE[m]}</td><td colspan="4">—</td></tr>`);
+    }
+  }
+  const yNet = yInc - yExp;
+  const closedCount = yearRows.length;
+  el('cf-history-body', `
+    <table class="hist-table">
+      <thead><tr><th>חודש</th><th>הכנסות</th><th>הוצאות</th><th>נטו</th><th></th></tr></thead>
+      <tbody>${bodyRows.join('')}
+        <tr class="hist-year">
+          <td>סיכום שנתי ${cfHistoryYear}${closedCount < 12 ? ` (${closedCount} חודשים)` : ''}</td>
+          <td class="g">₪${fmt(yInc)}</td>
+          <td class="r">₪${fmt(yExp)}</td>
+          <td class="${yNet >= 0 ? 'g' : 'r'}">₪${fmt(yNet)}</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+  `);
+}
+
+function buildCfCloseForm() {
+  const { year, month } = getIsraelYearMonth();
+  const startY = Math.min(2026, year - 1);
+  const endY = Math.max(2028, year + 1);
+  let yearOpts = '';
+  for (let y = endY; y >= startY; y--) {
+    yearOpts += `<option value="${y}" ${y === year ? 'selected' : ''}>${y}</option>`;
+  }
+  let monthOpts = '';
+  for (let m = 1; m <= 12; m++) {
+    monthOpts += `<option value="${m}" ${m === month ? 'selected' : ''}>${MONTH_NAMES_HE[m]}</option>`;
+  }
+  return `<div class="fg"><label>שנה</label><select id="f1">${yearOpts}</select></div>
+    <div class="fg"><label>חודש</label><select id="f2">${monthOpts}</select></div>
+    <p style="font-size:12px;color:var(--text2);margin:0">נשמר סיכום לפי התזרים והנדל״ן כפי שהם עכשיו במערכת.</p>`;
+}
+
+window.closeCashflowMonth = closeCashflowMonth;
+window.setCfHistoryYear = setCfHistoryYear;
+
 // ── Data fetchers ─────────────────────────────────────────
 async function fetch_(table, order = 'created_at') {
   const { data, error } = await sb.from(table).select('*').order(order);
@@ -498,16 +667,13 @@ async function renderOverview() {
   const totalDebt = loanTotal + reMort + savLoans.reduce((a, l) => a + Number(l.balance || 0), 0);
   const netWorth = totalAssets - totalDebt;
 
-  const income = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0)
-    + props.reduce((a, p) => a + Number(p.rental_income || 0), 0);
-  const expenses = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0)
-    + props.reduce((a, p) => a + Number(p.monthly_mortgage || 0) + Number(p.monthly_expenses || 0), 0);
+  const { income, expense: expenses, net: cfNet } = calcCashflowTotals(cf, props);
 
   el('ov-summary', `
     <div class="met"><div class="ml">שווי נטו</div><div class="mv g">₪${fmt(netWorth)}</div><div class="ms">נכסים פחות חובות</div></div>
     <div class="met"><div class="ml">סה"כ נכסים</div><div class="mv b">₪${fmt(totalAssets)}</div></div>
     <div class="met"><div class="ml">סה"כ חובות</div><div class="mv r">₪${fmt(totalDebt)}</div></div>
-    <div class="met"><div class="ml">תזרים חודשי</div><div class="mv ${income - expenses >= 0 ? 'g' : 'r'}">₪${fmt(income - expenses)}</div></div>
+    <div class="met"><div class="ml">תזרים חודשי</div><div class="mv ${cfNet >= 0 ? 'g' : 'r'}">₪${fmt(cfNet)}</div></div>
   `);
 
   // Alerts
@@ -533,7 +699,7 @@ async function renderOverview() {
     <div class="row"><span class="row-name">הוצאות</span><span class="row-amount r">₪${fmt(expenses)}</span></div>
     <div class="row" style="border-top:0.5px solid var(--border2);margin-top:4px;padding-top:8px">
       <span class="row-name" style="font-weight:600">יתרה</span>
-      <span class="row-amount ${income - expenses >= 0 ? 'g' : 'r'}" style="font-size:15px">₪${fmt(income - expenses)}</span>
+      <span class="row-amount ${cfNet >= 0 ? 'g' : 'r'}" style="font-size:15px">₪${fmt(cfNet)}</span>
     </div>
   `);
 
@@ -562,8 +728,7 @@ async function renderFinance() {
     fetch_('loans'), fetch_('credit_cards'), fetch_('cashflow'), fetch_('properties')
   ]);
 
-  const inc = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0);
-  const exp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0);
+  const { income: inc, expense: exp } = calcCashflowTotals(cf, props);
   const debt = loans.reduce((a, b) => a + Number(b.balance), 0);
 
   el('fin-summary', `
@@ -611,6 +776,8 @@ async function renderFinance() {
         <button class="btn icon-only" onclick="del('cashflow','${c.id}')">🗑</button>
       </div>
     </div>`).join('') || '<div class="empty">הוסף פריטים</div>');
+
+  await renderCashflowHistoryOnly();
 }
 
 // ── Savings ───────────────────────────────────────────────
@@ -919,6 +1086,7 @@ const DELETE_CONFIRM = {
   loans: 'למחוק הלוואה זו?',
   credit_cards: 'למחוק כרטיס אשראי זה?',
   cashflow: 'למחוק פריט תזרים זה?',
+  cashflow_monthly: 'למחוק סיכום חודש זה מהיומן?',
   savings_cats: 'למחוק קטגוריה זו וכל מה שבתוכה?',
   savings_accounts: 'למחוק חשבון זה?',
   savings_stocks: 'למחוק מניה זו?',
@@ -953,44 +1121,92 @@ async function del(table, id, refresh = false) {
 
 // ── Stocks ────────────────────────────────────────────────
 function normalizeStockSymbol(raw) {
-  return (raw || '').trim().toUpperCase().replace(/\s+/g, '');
+  return (raw || '').trim().toUpperCase().replace(/\s+/g, '').toUpperCase();
 }
 
-async function fetchYahooPrice(sym) {
+async function fetchWithTimeout(url, ms = 7000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function parseYahooChart(json) {
+  const meta = json?.chart?.result?.[0]?.meta;
+  const price = meta?.regularMarketPrice ?? meta?.previousClose;
+  if (price == null) return null;
+  const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
+  return { price, chg: prev ? ((price - prev) / prev * 100) : 0 };
+}
+
+async function fetchYahooPriceOnce(sym) {
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=5d`;
-  const attempts = [
+  const sources = [
     yahooUrl,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`
   ];
-  for (const url of attempts) {
+  for (const url of sources) {
     try {
-      const r = await fetch(url);
+      const r = await fetchWithTimeout(url, 7000);
       if (!r.ok) continue;
-      let d;
-      if (url.includes('allorigins.win')) {
-        const wrap = await r.json();
-        d = JSON.parse(wrap.contents);
-      } else {
-        d = await r.json();
-      }
-      const meta = d?.chart?.result?.[0]?.meta;
-      const price = meta?.regularMarketPrice ?? meta?.previousClose;
-      if (price == null) continue;
-      const prev = meta.chartPreviousClose ?? meta.previousClose ?? price;
-      return { price, chg: prev ? ((price - prev) / prev * 100) : 0 };
+      const d = await r.json();
+      const px = parseYahooChart(d);
+      if (px) return px;
     } catch (e) {
-      console.warn('fetchYahooPrice', sym, e);
+      console.warn('fetchYahooPriceOnce', sym, url.slice(0, 40), e.message || e);
     }
   }
   return null;
 }
 
-async function applyStockPrice(sym) {
+async function fetchYahooPrice(sym) {
+  const candidates = sym.includes('.') ? [sym] : [sym, sym + '.TA'];
+  for (const s of candidates) {
+    const px = await fetchYahooPriceOnce(s);
+    if (px) return { ...px, symbol: s };
+  }
+  return null;
+}
+
+function stockSaveError(error) {
+  if (!error) return 'שגיאה בשמירה';
+  const m = error.message || '';
+  if (m.includes('change_pct') || error.code === 'PGRST204') {
+    return 'חסרה עמודה change_pct — הרץ stocks-migration.sql ב-Supabase';
+  }
+  if (error.code === '23503') return 'קטגוריה לא נמצאה — רענן את המסך';
+  if (error.code === '42501' || m.includes('policy') || m.includes('JWT')) {
+    return 'אין הרשאה — התחבר מחדש';
+  }
+  if (m.includes('duplicate')) return 'מניה זו כבר קיימת בקטגוריה';
+  return 'שגיאה בשמירה: ' + (m || error.code || 'לא ידוע');
+}
+
+async function applyStockPrice(sym, stockId) {
   const px = await fetchYahooPrice(sym);
   if (!px) return false;
-  stockPrices[sym] = px.price;
-  const { error } = await sb.from('savings_stocks').update({ change_pct: px.chg }).eq('symbol', sym);
-  if (error) console.warn('change_pct update', sym, error);
+  const resolved = px.symbol || sym;
+  stockPrices[resolved] = px.price;
+  if (resolved !== sym) stockPrices[sym] = px.price;
+  if (!sb) return true;
+  let q = sb.from('savings_stocks').update({ change_pct: px.chg });
+  if (stockId) q = q.eq('id', stockId);
+  else q = q.eq('symbol', sym);
+  const { error } = await q;
+  if (error) {
+    if (error.message?.includes('change_pct') || error.code === 'PGRST204') {
+      console.warn('change_pct missing — run stocks-migration.sql');
+    } else {
+      console.warn('applyStockPrice', sym, error);
+    }
+  }
+  if (resolved !== sym && stockId) {
+    await sb.from('savings_stocks').update({ symbol: resolved }).eq('id', stockId);
+  }
   return true;
 }
 
@@ -1013,12 +1229,9 @@ async function shareWA() {
   const [loans, cf, props, savLoans] = await Promise.all([
     fetch_('loans'), fetch_('cashflow'), fetch_('properties'), fetch_('savings_loans')
   ]);
-  const inc = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0)
-    + props.reduce((a, p) => a + Number(p.rental_income || 0), 0);
-  const exp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0)
-    + props.reduce((a, p) => a + Number(p.monthly_mortgage || 0) + Number(p.monthly_expenses || 0), 0);
+  const { income: inc, expense: exp, net } = calcCashflowTotals(cf, props);
   let msg = `*משפחת אפללו — סיכום*\n${new Date().toLocaleDateString('he-IL')}\n\n`;
-  msg += `💵 תזרים נטו: ₪${fmt(inc - exp)}\n`;
+  msg += `💵 תזרים נטו: ₪${fmt(net)}\n`;
   msg += `📈 הכנסות: ₪${fmt(inc)}\n`;
   msg += `📉 הוצאות: ₪${fmt(exp)}\n`;
   window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
@@ -1045,7 +1258,7 @@ const forms = {
     <div class="fg"><label>יעד (₪)</label><input id="f3" type="number" placeholder="0"></div>
     <div class="fg"><label>הערה</label><input id="f4" placeholder="ריבית, תנאים..."></div>`,
   sstk: `<div class="fg"><label>סימול (באנגלית)</label><input id="f1" placeholder="TEVA.TA או AAPL" dir="ltr" autocomplete="off" autocapitalize="off">
-    <div class="hint">בורסת ת"א: חובה סיום <span dir="ltr">.TA</span> (למשל <span dir="ltr">TEVA.TA</span>). ארה"ב: <span dir="ltr">AAPL</span>, <span dir="ltr">MSFT</span></div></div>
+    <div class="hint">ת"א: <span dir="ltr">TEVA</span> או <span dir="ltr">TEVA.TA</span> · ארה"ב: <span dir="ltr">AAPL</span>, <span dir="ltr">MSFT</span></div></div>
     <div class="fg"><label>שם תיאורי</label><input id="f2" placeholder="טבע, אפל..."></div>
     <div class="fg"><label>כמות יחידות</label><input id="f3" type="number" step="0.0001" min="0.0001" inputmode="decimal" placeholder="10"></div>`,
   sloan: `<div class="modal-sec">הלוואה מגובת נכס (מינוף)</div>
@@ -1093,42 +1306,69 @@ const forms = {
     <div class="fg"><label>תדירות</label><select id="f3"><option value="monthly">חודשי</option><option value="quarterly">רבעוני</option><option value="weekly">שבועי</option><option value="yearly">שנתי</option></select></div>
     <div class="fg"><label>תאריך ראשון</label><input id="f4" type="date"></div>`
 };
-const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', scat: 'קטגוריה חדשה', sacc: 'חשבון חדש', sstk: 'מניה/ETF', sloan: 'הלוואה על נכס', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', car: 'רכב חדש', cev: 'אירוע רכב', shop: 'קנייה', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', sacc: 'חשבון חדש', sstk: 'מניה/ETF', sloan: 'הלוואה על נכס', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', car: 'רכב חדש', cev: 'אירוע רכב', shop: 'קנייה', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
 
 function om(type, target) {
   modalType = type; modalTarget = target || null;
   document.getElementById('modal-title').textContent = titles[type] || type;
-  document.getElementById('modal-body').innerHTML = forms[type] || '';
+  document.getElementById('modal-body').innerHTML = type === 'cfclose' ? buildCfCloseForm() : (forms[type] || '');
   document.getElementById('modal').classList.add('open');
   setTimeout(() => document.getElementById('f1') && document.getElementById('f1').focus(), 80);
 }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 
+function setModalSaving(on) {
+  const btn = document.querySelector('#modal .btn.primary');
+  if (btn) {
+    btn.disabled = on;
+    btn.textContent = on ? 'שומר...' : 'שמור';
+  }
+}
+
 async function saveModal() {
   const t = modalType, tgt = modalTarget;
+  setModalSaving(true);
   try {
     const cols = { bank: '#E6F1FB', stocks: '#E1F5EE', pension: '#FAEEDA', other: '#F1EFE8' };
     if (t === 'loan') await sb.from('loans').insert({ name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, note: gv('f4') });
     else if (t === 'cc') await sb.from('credit_cards').insert({ name: gv('f1'), credit_limit: +gv('f2') || 0, used: +gv('f3') || 0, cycle: gv('f4') });
     else if (t === 'cf') await sb.from('cashflow').insert({ name: gv('f1'), amount: +gv('f2') || 0, type: gv('f3') });
+    else if (t === 'cfclose') {
+      const year = +gv('f1');
+      const month = +gv('f2');
+      if (!year || month < 1 || month > 12) { toast('בחר שנה וחודש'); return; }
+      closeModal();
+      await closeCashflowMonth(year, month);
+      return;
+    }
     else if (t === 'scat') await sb.from('savings_cats').insert({ name: gv('f1'), icon: gv('f2') || '💰', color: cols[gv('f3')] || '#F1EFE8', type: gv('f3'), display_order: 99 });
     else if (t === 'sacc') await sb.from('savings_accounts').insert({ cat_id: tgt, name: gv('f1'), amount: +gv('f2') || 0, goal: +gv('f3') || 0, note: gv('f4') });
     else if (t === 'sstk') {
+      if (!sb) { toast('לא מחובר — התחבר שוב'); return; }
+      if (!tgt) { toast('קטגוריה חסרה — סגור ונסה שוב'); return; }
       const symbol = normalizeStockSymbol(gv('f1'));
       const units = parseFloat(gv('f3'));
       if (!symbol) { toast('הכנס סימול מניה'); return; }
-      if (!units || units <= 0) { toast('הכנס כמות יחידות (מעל 0)'); return; }
-      const { error } = await sb.from('savings_stocks').insert({
+      if (!Number.isFinite(units) || units <= 0) { toast('הכנס כמות יחידות (מעל 0)'); return; }
+      const { data: row, error } = await sb.from('savings_stocks').insert({
         cat_id: tgt, symbol, name: gv('f2') || symbol, units
-      });
+      }).select('id').single();
       if (error) {
-        toast(error.message.includes('duplicate') ? 'מניה זו כבר קיימת' : 'שגיאה בשמירה');
+        toast(stockSaveError(error));
         console.error('sstk insert', error);
         return;
       }
       openBlocks['cat_' + tgt] = true;
-      const priceOk = await applyStockPrice(symbol);
-      toast(priceOk ? '✓ מניה נשמרה' : '✓ נשמר — לחץ ⟳ מניות לעדכון מחיר');
+      closeModal();
+      toast('✓ מניה נשמרה');
+      const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+      if (page) renderPage(page);
+      renderOverview();
+      void applyStockPrice(symbol, row?.id).then(ok => {
+        if (!ok) toast('מחיר יתעדכן בלחיצה על ⟳ מניות');
+        else if (page === 'savings') renderSavings();
+      });
+      return;
     }
     else if (t === 'sloan') await sb.from('savings_loans').insert({ cat_id: tgt, name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, rate: +gv('f4') || 0, note: gv('f5') });
     else if (t === 'prop' || t === 'prop_edit') {
@@ -1151,6 +1391,7 @@ async function saveModal() {
     if (page) renderPage(page);
     renderOverview();
   } catch (e) { toast('שגיאה — נסה שוב'); console.error(e); }
+  finally { setModalSaving(false); }
 }
 
 function bindUi() {

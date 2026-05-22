@@ -7,20 +7,23 @@
 <meta name="apple-mobile-web-app-title" content="משפחת אפללו">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>משפחת אפללו</title>
+<link rel="canonical" href="https://oraflalo3-ux.github.io/Aflalo-Family/index.html">
+<link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon.svg">
-<!-- בלי manifest: באייפון "הוסף למסך הבית" שומר את הכתובת הנוכחית (נכון). manifest גרם ל-404 -->
 <script>
 (function () {
+  var CANONICAL = 'https://oraflalo3-ux.github.io/Aflalo-Family/';
   var path = location.pathname;
+  if (location.hostname.endsWith('github.io') && (path.indexOf('bayit-shelanu') !== -1 || /^\/bayit(\/|$)/i.test(path))) {
+    location.replace(CANONICAL + 'index.html');
+    return;
+  }
   var dir = path.endsWith('/') ? path : path.replace(/\/[^/]*$/, '/');
-  var base = location.origin + (dir || '/');
-  window.__APP_BASE__ = base;
-  var appPath = '/bayit-shelanu/';
-  var appUrl = location.origin + appPath + 'index.html';
-  if ((window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches)
-      && location.hostname.endsWith('github.io')
-      && !path.includes('bayit-shelanu')) {
-    location.replace(appUrl);
+  if (!dir || dir === '/') dir = '/Aflalo-Family/';
+  window.__APP_BASE__ = location.origin + dir;
+  var isApp = window.navigator.standalone || window.matchMedia('(display-mode: standalone)').matches;
+  if (isApp && location.hostname.endsWith('github.io') && path.indexOf('bayit-shelanu') !== -1) {
+    location.replace(CANONICAL + 'index.html');
   }
 })();
 </script>
@@ -119,6 +122,17 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .badge.b { background: var(--blue-light); color: var(--blue); }
 .badge.am { background: var(--amber-light); color: var(--amber); }
 .badge.gy { background: var(--bg3); color: var(--text2); }
+
+/* Cashflow history */
+.year-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: .75rem; }
+.year-pill { padding: 6px 12px; border-radius: 16px; border: 0.5px solid var(--border); background: var(--bg2); cursor: pointer; font-size: 13px; touch-action: manipulation; }
+.year-pill.active { background: var(--green-light); border-color: var(--green-mid); color: var(--green); font-weight: 600; }
+.hist-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+.hist-table th, .hist-table td { padding: 8px 10px; border-bottom: 0.5px solid var(--border); text-align: right; }
+.hist-table th { font-size: 11px; color: var(--text2); font-weight: 600; }
+.hist-table tr.hist-year td { font-weight: 700; background: var(--bg3); border-top: 0.5px solid var(--border2); }
+.hist-table tr.hist-draft td { color: var(--text2); font-style: italic; }
+.hist-table tr.hist-empty td { color: var(--text3); }
 
 /* Cashflow bar */
 .cfbar { display: flex; gap: 2px; height: 24px; border-radius: var(--radius); overflow: hidden; margin-bottom: .5rem; }
@@ -338,6 +352,19 @@ html.app-main #config-screen { display: none !important; }
     <div id="cf-bar"></div>
     <div id="cf-list"></div>
   </div>
+  <div class="sec">יומן היסטוריה</div>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">סיכום חודשי ושנתי</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn sm" onclick="closeCashflowMonth()">📅 סגור חודש נוכחי</button>
+        <button type="button" class="btn sm" onclick="om('cfclose')">חודש אחר…</button>
+      </div>
+    </div>
+    <p style="font-size:12px;color:var(--text2);margin:0 0 .75rem;padding:0 .25rem">שומר את סיכום ההכנסות וההוצאות (כולל נדל״ן) לפי חודש. בחר שנה לצפייה בסיכום שנתי.</p>
+    <div id="cf-history-years"></div>
+    <div id="cf-history-body"></div>
+  </div>
 </div>
 
 <div id="page-savings" class="page">
@@ -455,6 +482,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=14"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>
