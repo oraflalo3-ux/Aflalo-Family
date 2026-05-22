@@ -261,6 +261,7 @@ function initSupabaseClient() {
   });
   return true;
 }
+window.initSupabaseClient = initSupabaseClient;
 
 async function getSession() {
   if (!sb) return null;
@@ -275,20 +276,110 @@ function setUserLabel(session) {
   el.textContent = local;
 }
 
-function updateConnectionBadge() {
-  const el = document.getElementById('conn-badge');
-  const creds = getSupabaseCredentials();
-  if (!el || !creds?.url) {
-    if (el) el.textContent = '';
+const MODULE_NAV = [
+  { page: 'finance', col: 'show_finance', label: 'תזרים' },
+  { page: 'savings', col: 'show_savings', label: 'חסכונות' },
+  { page: 'realestate', col: 'show_realestate', label: 'נדל"ן' },
+  { page: 'cars', col: 'show_cars', label: 'רכבים' },
+  { page: 'daily', col: 'show_daily', label: 'יומיומי' },
+  { page: 'alerts', col: 'show_alerts', label: 'התראות' }
+];
+
+let familyPrefs = {
+  finance: true, savings: true, realestate: true, cars: true, daily: true, alerts: true
+};
+
+function isPageVisible(page) {
+  return page === 'overview' || familyPrefs[page] !== false;
+}
+
+function rowToFamilyPrefs(row) {
+  const p = { finance: true, savings: true, realestate: true, cars: true, daily: true, alerts: true };
+  if (!row) return p;
+  MODULE_NAV.forEach(m => { p[m.page] = row[m.col] !== false; });
+  return p;
+}
+
+async function loadFamilyPrefs() {
+  if (!sb) return;
+  const { data, error } = await sb.from('family_prefs').select('*').eq('singleton', 1).maybeSingle();
+  if (error) {
+    if (error.code === 'PGRST205' || (error.message || '').includes('family_prefs')) {
+      console.warn('family_prefs missing — run family-prefs-migration.sql');
+    } else {
+      console.error('loadFamilyPrefs', error);
+    }
+    applyModuleVisibility();
     return;
   }
-  try {
-    const ref = new URL(creds.url).hostname.split('.')[0];
-    el.textContent = ref;
-    el.title = 'מחובר ל-Supabase: ' + creds.url + '\nאם לא תואם למחשב השני — אותו URL ומפתח בשניהם';
-  } catch (_) {
-    el.textContent = '';
+  if (!data) {
+    const defaults = { singleton: 1, show_finance: true, show_savings: true, show_realestate: true, show_cars: true, show_daily: true, show_alerts: true };
+    await sb.from('family_prefs').upsert(defaults, { onConflict: 'singleton' });
+    familyPrefs = rowToFamilyPrefs(defaults);
+  } else {
+    familyPrefs = rowToFamilyPrefs(data);
   }
+  applyModuleVisibility();
+  updateSharedViewUi();
+}
+
+function applyModuleVisibility() {
+  document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
+    const page = btn.dataset.page;
+    if (page === 'overview') {
+      btn.style.display = '';
+      return;
+    }
+    btn.style.display = isPageVisible(page) ? '' : 'none';
+  });
+  const active = document.querySelector('.page.active');
+  if (active) {
+    const id = active.id.replace('page-', '');
+    if (!isPageVisible(id)) goTo('overview', document.querySelector('.nav-item[data-page="overview"]'));
+  }
+}
+
+function updateSharedViewUi() {
+  const creds = getSupabaseCredentials();
+  let ref = '';
+  if (creds?.url) {
+    try { ref = new URL(creds.url).hostname.split('.')[0]; } catch (_) { /* ignore */ }
+  }
+  const conn = document.getElementById('conn-badge');
+  if (conn && ref) {
+    conn.textContent = ref;
+    conn.title = 'נתונים משותפים — פרויקט ' + ref + '\nשניכם: אותו URL + מפתח (או config.js זהה) = אותם מספרים ואותה תצוגה';
+  }
+  const shared = document.getElementById('shared-view-badge');
+  if (shared) shared.textContent = '👥 משותף';
+  const note = document.getElementById('ov-shared-note');
+  if (note) {
+    note.innerHTML = ref
+      ? `נתונים ותצוגה משותפים (פרויקט <span dir="ltr">${ref}</span>). מה שמסתיר/מוסיף אחד — השני רואה אחרי רענון.`
+      : 'הגדרות תצוגה נשמרות בענן לכל המשפחה.';
+  }
+}
+
+function buildDisplayForm() {
+  return `<p style="font-size:12px;color:var(--text2);margin-bottom:.75rem;line-height:1.5">סימון כאן משפיע על <strong>שניכם</strong> — אותם לשוניות בתפריט.</p>
+    ${MODULE_NAV.map(m => `<label class="check-row" style="margin-bottom:.35rem">
+      <input type="checkbox" id="dp-${m.page}" ${familyPrefs[m.page] !== false ? 'checked' : ''}>
+      <span class="check-text">${m.label}</span>
+    </label>`).join('')}
+    <p class="hint" style="margin-top:.75rem">סקירה תמיד מוצגת. נתונים (סכומים) תמיד מאותו Supabase — ודאו אותו מפתח בשני המכשירים.</p>`;
+}
+
+function openDisplaySettings() {
+  modalType = 'display';
+  modalTarget = null;
+  document.getElementById('modal-title').textContent = 'תצוגה משותפת למשפחה';
+  document.getElementById('modal-body').innerHTML = buildDisplayForm();
+  document.getElementById('modal').classList.add('open');
+}
+window.openDisplaySettings = openDisplaySettings;
+
+function updateConnectionBadge() {
+  updateSharedViewUi();
 }
 
 // ── Auth ──────────────────────────────────────────────────
@@ -398,13 +489,12 @@ async function boot() {
 }
 
 function setConfigBusy(busy) {
+  ['btn-save-config', 'btn-save-config-skip', 'btn-save-config-go'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) b.disabled = busy;
+  });
   const btn = document.getElementById('btn-save-config');
-  const btn2 = document.getElementById('btn-save-config-skip');
-  if (btn) {
-    btn.disabled = busy;
-    btn.textContent = busy ? 'בודק...' : 'בדוק חיבור ושמור';
-  }
-  if (btn2) btn2.disabled = busy;
+  if (btn && !busy) btn.textContent = 'בדוק חיבור ואז שמור';
 }
 
 function goToLoginStep(msg) {
@@ -500,11 +590,13 @@ window.toggleCfgKeyVisible = toggleCfgKeyVisible;
 window.saveConfig = () => saveConfig(false);
 window.saveConfigSkipTest = () => saveConfig(true);
 window.saveConfigAndContinue = saveConfigAndContinue;
+if (!window.saveConfigGo) window.saveConfigGo = () => saveConfig(true);
 
 // ── Init ─────────────────────────────────────────────────
 async function init() {
   setSyncStatus('טוען');
   try {
+    await loadFamilyPrefs();
     await Promise.all([renderAll()]);
     refreshStocks();
     setSyncStatus('✓');
@@ -523,6 +615,11 @@ let navBusy = false;
 
 function goTo(page, btn) {
   if (navBusy) return;
+  if (!isPageVisible(page)) {
+    toast('מודול מוסתר — שנה ב״תצוגה משותפת״');
+    page = 'overview';
+    btn = document.querySelector('.nav-item[data-page="overview"]');
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + page)?.classList.add('active');
@@ -573,6 +670,30 @@ function dueLabel(days) {
   return `${days} יום`;
 }
 
+function isCarEventOverdue(eventDate) {
+  return getDueDays(eventDate) < 0;
+}
+
+function carEventLabel(ev, car) {
+  const c = car ? `${car.make} ${car.model}` : 'רכב';
+  return `${ev.type} — ${c}`;
+}
+
+async function completeCarEvent(id) {
+  if (!sb) { toast('לא מחובר'); return; }
+  const { error } = await sb.from('car_events').delete().eq('id', id);
+  if (error) {
+    toast('שגיאה בעדכון');
+    console.error('completeCarEvent', error);
+    return;
+  }
+  toast('✓ בוצע — הוסר מהרשימה');
+  const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+  if (page) await renderPage(page);
+  await renderOverview();
+}
+window.completeCarEvent = completeCarEvent;
+
 const MONTH_NAMES_HE = ['', 'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 
 function getIsraelYearMonth() {
@@ -585,6 +706,10 @@ function getIsraelYearMonth() {
     year: +parts.find(p => p.type === 'year').value,
     month: +parts.find(p => p.type === 'month').value
   };
+}
+
+function isCfFixed(item) {
+  return item.is_fixed === true || item.is_fixed === 'true';
 }
 
 function calcCashflowTotals(cf, props) {
@@ -647,6 +772,7 @@ async function closeCashflowMonth(year, month) {
   cfHistoryYear = y;
   toast(`✓ נשמר — ${label}`);
   await renderFinance();
+  renderOverview();
 }
 
 function setCfHistoryYear(y) {
@@ -756,11 +882,16 @@ async function fetch_(table, order = 'created_at') {
 
 // ── Overview ──────────────────────────────────────────────
 async function renderOverview() {
-  const [loans, cc, cf, cats, accs, stocks, savLoans, props, alertDefs] = await Promise.all([
+  const [loans, cc, cf, cats, accs, stocks, savLoans, props, alertDefs, cars, carEvents] = await Promise.all([
     fetch_('loans'), fetch_('credit_cards'), fetch_('cashflow'),
     fetch_('savings_cats'), fetch_('savings_accounts'), fetch_('savings_stocks'),
-    fetch_('savings_loans'), fetch_('properties'), fetch_('alert_defs')
+    fetch_('savings_loans'), fetch_('properties'), fetch_('alert_defs'),
+    fetch_('cars'), fetch_('car_events', 'event_date')
   ]);
+  const carById = Object.fromEntries(cars.map(c => [c.id, c]));
+  const overdueCarEvents = carEvents
+    .filter(e => isCarEventOverdue(e.event_date))
+    .sort((a, b) => getDueDays(a.event_date) - getDueDays(b.event_date));
 
   const savTotal = calcSavTotal(cats, accs, stocks, savLoans);
   const reTotal = props.reduce((a, p) => a + Number(p.value || 0), 0);
@@ -772,41 +903,66 @@ async function renderOverview() {
 
   const { income, expense: expenses, net: cfNet } = calcCashflowTotals(cf, props);
 
+  const fixedExp = cf.filter(c => c.type === 'expense' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
+  const varExp = cf.filter(c => c.type === 'expense' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
+
   el('ov-summary', `
-    <div class="met"><div class="ml">שווי נטו</div><div class="mv g">₪${fmt(netWorth)}</div><div class="ms">נכסים פחות חובות</div></div>
-    <div class="met"><div class="ml">סה"כ נכסים</div><div class="mv b">₪${fmt(totalAssets)}</div></div>
-    <div class="met"><div class="ml">סה"כ חובות</div><div class="mv r">₪${fmt(totalDebt)}</div></div>
-    <div class="met"><div class="ml">תזרים חודשי</div><div class="mv ${cfNet >= 0 ? 'g' : 'r'}">₪${fmt(cfNet)}</div></div>
+    <div class="met ov-hero"><div class="ml">תזרים נטו החודש</div><div class="mv ${cfNet >= 0 ? 'g' : 'r'}">₪${fmt(cfNet)}</div></div>
+    <div class="met"><div class="ml">הכנסות</div><div class="mv g">₪${fmt(income)}</div></div>
+    <div class="met"><div class="ml">הוצאות</div><div class="mv r">₪${fmt(expenses)}</div></div>
+    <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv">₪${fmt(fixedExp)}</div><div class="ms">משתנות ₪${fmt(varExp)}</div></div>
   `);
 
-  // Alerts
-  const urgentAlerts = alertDefs.filter(a => a.active && getDueDays(a.next_date) <= 14);
-  el('ov-alerts', urgentAlerts.length
-    ? urgentAlerts.map(a => {
+  el('ov-details', `
+    <div class="met"><div class="ml">שווי נטו</div><div class="mv g">₪${fmt(netWorth)}</div></div>
+    <div class="met"><div class="ml">נכסים</div><div class="mv b">₪${fmt(totalAssets)}</div></div>
+    <div class="met"><div class="ml">חובות</div><div class="mv r">₪${fmt(totalDebt)}</div></div>
+    <div class="met"><div class="ml">הלוואות+כרטיסים</div><div class="mv">${loans.length + cc.length}</div><div class="ms">בתזרים → עוד</div></div>
+  `);
+
+  // התראות — רק באיחור (לא "בקרוב")
+  const overdueAlerts = alertDefs.filter(a => a.active && getDueDays(a.next_date) < 0);
+  const alertRows = [
+    ...overdueCarEvents.map(ev => {
+      const days = getDueDays(ev.event_date);
+      const car = carById[ev.car_id];
+      return `<div class="alert-row alert-urgent">
+        <span>🚗</span>
+        <div style="flex:1">
+          <div class="row-name">${carEventLabel(ev, car)}</div>
+          <div class="row-meta">${dueLabel(days)} · ${ev.event_date}${ev.note ? ' · ' + ev.note : ''}</div>
+        </div>
+        <button type="button" class="btn sm" onclick="completeCarEvent('${ev.id}')">✓ בוצע</button>
+      </div>`;
+    }),
+    ...overdueAlerts.map(a => {
       const days = getDueDays(a.next_date);
-      return `<div class="alert-row ${days <= 3 ? 'alert-urgent' : 'alert-soon'}">
+      return `<div class="alert-row alert-urgent">
         <span>🔔</span>
         <div style="flex:1"><div class="row-name">${a.name}</div><div class="row-meta">${dueLabel(days)}</div></div>
-        <span class="badge ${days <= 3 ? 'r' : 'am'}">${days <= 3 ? 'דחוף' : 'בקרוב'}</span>
+        <button type="button" class="btn sm" onclick="markDone('${a.id}','${a.freq}','${a.next_date}')">✓ בוצע</button>
       </div>`;
-    }).join('')
-    : '<div class="empty">אין התראות דחופות 🎉</div>');
+    })
+  ];
+  el('ov-alerts', alertRows.length
+    ? alertRows.join('')
+    : '<div class="empty">אין דברים באיחור 🎉</div>');
 
-  // Cashflow bar
   const tot = income + expenses || 1;
   const ip = Math.round(income / tot * 100);
   el('ov-cf', `
     <div class="cfbar"><div class="cfi" style="width:${ip}%">₪${fmt(income)}</div><div class="cfe" style="width:${100 - ip}%">₪${fmt(expenses)}</div></div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:.6rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
     <div class="row"><span class="row-name">הכנסות</span><span class="row-amount g">₪${fmt(income)}</span></div>
     <div class="row"><span class="row-name">הוצאות</span><span class="row-amount r">₪${fmt(expenses)}</span></div>
     <div class="row" style="border-top:0.5px solid var(--border2);margin-top:4px;padding-top:8px">
       <span class="row-name" style="font-weight:600">יתרה</span>
       <span class="row-amount ${cfNet >= 0 ? 'g' : 'r'}" style="font-size:15px">₪${fmt(cfNet)}</span>
     </div>
+    <button type="button" class="btn primary" style="width:100%;justify-content:center;margin-top:.85rem;padding:12px" onclick="closeCashflowMonth()">📅 סגרתי את החודש — שמור להיסטוריה</button>
+    <p class="hint" style="margin-top:.5rem;text-align:center">קבועות נשארות לבד · עדכן משתנות ואז סגור חודש</p>
   `);
 
-  updateAlertBadge(urgentAlerts.length);
+  updateAlertBadge(overdueAlerts.length + overdueCarEvents.length);
 }
 
 function calcSavTotal(cats, accs, stocks, savLoans) {
@@ -824,6 +980,72 @@ function updateAlertBadge(count) {
   if (count > 0) { badge.style.display = 'flex'; badge.textContent = count; }
   else { badge.style.display = 'none'; }
 }
+
+function renderCashflowRow(c) {
+  const fixed = isCfFixed(c);
+  const amtClass = c.type === 'income' ? 'g' : 'r';
+  return `<div class="row">
+      <span class="row-name">${c.name}</span>
+      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+        <span class="badge ${c.type === 'income' ? 'g' : 'r'}">${c.type === 'income' ? 'הכנסה' : 'הוצאה'}</span>
+        <span class="badge ${fixed ? 'b' : 'gy'}">${fixed ? 'קבועה' : 'משתנה'}</span>
+        <input type="number" class="cf-inline-amt ${amtClass}" value="${Number(c.amount)}" inputmode="decimal"
+          aria-label="סכום ${c.name}"
+          onblur="saveCfAmount('${c.id}', this.value)"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
+        <button type="button" class="btn sm" onclick="toggleCfFixed('${c.id}',${fixed ? 'false' : 'true'})" title="החלף קבועה/משתנה">${fixed ? '↔ משתנה' : '↔ קבועה'}</button>
+        <button class="btn icon-only" onclick="del('cashflow','${c.id}',true)">🗑</button>
+      </div>
+    </div>`;
+}
+
+async function saveCfAmount(id, val) {
+  if (!sb) { toast('לא מחובר'); return; }
+  const amount = parseFloat(val);
+  if (!Number.isFinite(amount) || amount < 0) {
+    toast('סכום לא תקין');
+    await renderFinance();
+    return;
+  }
+  const { error } = await sb.from('cashflow').update({ amount }).eq('id', id);
+  if (error) {
+    toast('שגיאה בעדכון סכום');
+    return;
+  }
+  await renderFinance();
+  renderOverview();
+}
+window.saveCfAmount = saveCfAmount;
+
+function renderCashflowListHtml(cf) {
+  if (!cf.length) return '<div class="empty">הוסף הכנסה או הוצאה — קבועה נשארת כל חודש</div>';
+  const blocks = [
+    { title: 'הכנסות קבועות', items: cf.filter(c => c.type === 'income' && isCfFixed(c)) },
+    { title: 'הכנסות משתנות', items: cf.filter(c => c.type === 'income' && !isCfFixed(c)) },
+    { title: 'הוצאות קבועות', items: cf.filter(c => c.type === 'expense' && isCfFixed(c)) },
+    { title: 'הוצאות משתנות', items: cf.filter(c => c.type === 'expense' && !isCfFixed(c)) }
+  ];
+  return blocks.filter(b => b.items.length).map(b =>
+    `<div class="cf-sec-title">${b.title}</div>${b.items.map(renderCashflowRow).join('')}`
+  ).join('');
+}
+
+async function toggleCfFixed(id, isFixed) {
+  if (!sb) { toast('לא מחובר'); return; }
+  const { error } = await sb.from('cashflow').update({ is_fixed: isFixed }).eq('id', id);
+  if (error) {
+    if (error.message?.includes('is_fixed') || error.code === 'PGRST204') {
+      toast('הרץ cashflow-fixed-migration.sql ב-Supabase');
+    } else {
+      toast('שגיאה בעדכון');
+    }
+    return;
+  }
+  toast(isFixed ? 'סומן כקבועה' : 'סומן כמשתנה');
+  await renderFinance();
+  renderOverview();
+}
+window.toggleCfFixed = toggleCfFixed;
 
 // ── Finance ───────────────────────────────────────────────
 async function renderFinance() {
@@ -870,15 +1092,7 @@ async function renderFinance() {
     <div style="font-size:11px;color:var(--text2);margin-bottom:.5rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
   `);
 
-  el('cf-list', cf.map(c => `
-    <div class="row">
-      <span class="row-name">${c.name}</span>
-      <div style="display:flex;align-items:center;gap:5px">
-        <span class="badge ${c.type === 'income' ? 'g' : 'r'}">${c.type === 'income' ? 'הכנסה' : 'הוצאה'}</span>
-        <span class="row-amount ${c.type === 'income' ? 'g' : 'r'}">₪${fmt(c.amount)}</span>
-        <button class="btn icon-only" onclick="del('cashflow','${c.id}')">🗑</button>
-      </div>
-    </div>`).join('') || '<div class="empty">הוסף פריטים</div>');
+  el('cf-list', renderCashflowListHtml(cf));
 
   await renderCashflowHistoryOnly();
 }
@@ -1082,11 +1296,13 @@ async function renderCars() {
           </div>
           ${carEvents.map(ev => {
       const days = getDueDays(ev.event_date);
+      const overdue = isCarEventOverdue(ev.event_date);
       return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px solid var(--border)">
               <span class="event-date ${dueCls(days)}">${dueLabel(days)}</span>
-              <div style="flex:1"><div class="row-name">${ev.type}</div>${ev.note ? `<div class="row-meta">${ev.note}</div>` : ''}</div>
+              <div style="flex:1"><div class="row-name">${ev.type}${overdue ? ' <span class="badge r">באיחור</span>' : ''}</div>${ev.note ? `<div class="row-meta">${ev.note}</div>` : ''}</div>
               ${ev.cost ? `<span class="row-amount">₪${fmt(ev.cost)}</span>` : ''}
               <span style="font-size:11px;color:var(--text3);direction:ltr">${ev.event_date}</span>
+              <button type="button" class="btn sm" onclick="completeCarEvent('${ev.id}')" title="בוצע — יוסר">✓</button>
               <button class="btn icon-only" onclick="del('car_events','${ev.id}',true)">🗑</button>
             </div>`;
     }).join('') || '<div class="empty">אין אירועים</div>'}
@@ -1340,6 +1556,44 @@ async function shareWA() {
   window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
 }
 
+// ── Cashflow form templates ───────────────────────────────
+const CF_TEMPLATES = [
+  'משכורת', 'משכורת ב׳', 'ביטוח', 'משכנתא', 'ארנונה', 'חינוך', 'גננת',
+  'תקשורת', 'מכולת', 'דלק', 'ועד בית', 'חשמל', 'גז', 'מים', 'אינטרנט'
+];
+
+function escAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function buildCfFormHtml() {
+  const chips = CF_TEMPLATES.map(t =>
+    `<button type="button" class="btn sm cf-tpl" data-tpl="${escAttr(t)}">${t}</button>`
+  ).join('');
+  return `<p class="hint" style="margin-bottom:.5rem">בחר תבנית או הקלד שם חופשי</p>
+    <div class="cf-tpl-wrap">${chips}</div>
+    <div class="fg"><label>שם</label><input id="f1" placeholder="משכורת, ביטוח, מכולת..."></div>
+    <div class="fg"><label>סכום (₪)</label><input id="f2" type="number" placeholder="0"></div>
+    <div class="fg"><label>סוג</label><select id="f3"><option value="income">הכנסה</option><option value="expense">הוצאה</option></select></div>
+    <div class="fg"><label>תדירות</label><select id="f4"><option value="1">קבועה — כל חודש (לא צריך להוסיף שוב)</option><option value="0">משתנה — עדכון מדי חודש</option></select></div>`;
+}
+
+function bindCfTemplateButtons() {
+  document.querySelectorAll('.cf-tpl').forEach(btn => {
+    btn.onclick = () => applyCfTemplate(btn.dataset.tpl);
+  });
+}
+
+window.applyCfTemplate = function (name) {
+  const f1 = document.getElementById('f1');
+  if (f1 && name) {
+    f1.value = name;
+    const f2 = document.getElementById('f2');
+    if (f2 && !f2.value) f2.focus();
+    else f1.focus();
+  }
+};
+
 // ── Modal system ──────────────────────────────────────────
 const forms = {
   loan: `<div class="fg"><label>שם</label><input id="f1" placeholder="הלוואת רכב..."></div>
@@ -1350,9 +1604,6 @@ const forms = {
     <div class="fg"><label>מסגרת (₪)</label><input id="f2" type="number" placeholder="10000"></div>
     <div class="fg"><label>ניצול (₪)</label><input id="f3" type="number" placeholder="0"></div>
     <div class="fg"><label>מועד ניכיון</label><input id="f4" placeholder="10 לחודש"></div>`,
-  cf: `<div class="fg"><label>שם</label><input id="f1" placeholder="משכורת..."></div>
-    <div class="fg"><label>סכום (₪)</label><input id="f2" type="number" placeholder="0"></div>
-    <div class="fg"><label>סוג</label><select id="f3"><option value="income">הכנסה</option><option value="expense">הוצאה</option></select></div>`,
   scat: `<div class="fg"><label>שם</label><input id="f1" placeholder="קרן השתלמות..."></div>
     <div class="fg"><label>אייקון</label><input id="f2" value="🌱" style="width:55px"></div>
     <div class="fg"><label>סוג</label><select id="f3"><option value="bank">בנק/פיקדון</option><option value="stocks">שוק ההון</option><option value="pension">פנסיה/גמל/השתלמות</option><option value="other">אחר</option></select></div>`,
@@ -1413,10 +1664,31 @@ const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פ
 
 function om(type, target) {
   modalType = type; modalTarget = target || null;
-  document.getElementById('modal-title').textContent = titles[type] || type;
-  document.getElementById('modal-body').innerHTML = type === 'cfclose' ? buildCfCloseForm() : (forms[type] || '');
+  let title = titles[type] || type;
+  if (type === 'cf' && target === 'fixed') title = 'הוצאה/הכנסה קבועה';
+  if (type === 'cf' && target === 'variable') title = 'הוצאה/הכנסה משתנה';
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = type === 'cfclose'
+    ? buildCfCloseForm()
+    : (type === 'cf' ? buildCfFormHtml() : (forms[type] || ''));
   document.getElementById('modal').classList.add('open');
-  setTimeout(() => document.getElementById('f1') && document.getElementById('f1').focus(), 80);
+  setTimeout(() => {
+    const f1 = document.getElementById('f1');
+    if (f1) f1.focus();
+    if (type === 'cf') {
+      bindCfTemplateButtons();
+      const f4 = document.getElementById('f4');
+      if (f4) f4.value = target === 'variable' ? '0' : '1';
+      if (target === 'fixed') {
+        const f3 = document.getElementById('f3');
+        if (f3) f3.value = 'expense';
+      }
+      if (target === 'variable') {
+        const f3 = document.getElementById('f3');
+        if (f3) f3.value = 'expense';
+      }
+    }
+  }, 80);
 }
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 
@@ -1435,7 +1707,21 @@ async function saveModal() {
     const cols = { bank: '#E6F1FB', stocks: '#E1F5EE', pension: '#FAEEDA', other: '#F1EFE8' };
     if (t === 'loan') await sb.from('loans').insert({ name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, note: gv('f4') });
     else if (t === 'cc') await sb.from('credit_cards').insert({ name: gv('f1'), credit_limit: +gv('f2') || 0, used: +gv('f3') || 0, cycle: gv('f4') });
-    else if (t === 'cf') await sb.from('cashflow').insert({ name: gv('f1'), amount: +gv('f2') || 0, type: gv('f3') });
+    else if (t === 'cf') {
+      const isFixed = modalTarget === 'fixed' || (modalTarget !== 'variable' && gv('f4') !== '0');
+      const { error } = await sb.from('cashflow').insert({
+        name: gv('f1'), amount: +gv('f2') || 0, type: gv('f3'), is_fixed: isFixed
+      });
+      if (error) {
+        if (error.message?.includes('is_fixed')) {
+          toast('הרץ cashflow-fixed-migration.sql ב-Supabase');
+        } else {
+          toast('שגיאה בשמירה');
+        }
+        console.error('cf insert', error);
+        return;
+      }
+    }
     else if (t === 'cfclose') {
       const year = +gv('f1');
       const month = +gv('f2');
@@ -1487,8 +1773,20 @@ async function saveModal() {
     else if (t === 'task') await sb.from('tasks').insert({ text: gv('f1'), who: gv('f2') || 'שניהם' });
     else if (t === 'rem') await sb.from('reminders').insert({ text: gv('f1'), reminder_date: gv('f2'), who: gv('f3') || 'שניהם' });
     else if (t === 'alert') await sb.from('alert_defs').insert({ name: gv('f1'), category: gv('f2'), freq: gv('f3'), next_date: gv('f4') || new Date().toISOString().split('T')[0] });
+    else if (t === 'display') {
+      const payload = { singleton: 1, updated_at: new Date().toISOString() };
+      MODULE_NAV.forEach(m => { payload[m.col] = !!document.getElementById('dp-' + m.page)?.checked; });
+      const { error } = await sb.from('family_prefs').upsert(payload, { onConflict: 'singleton' });
+      if (error) {
+        toast(error.message?.includes('family_prefs') ? 'הרץ family-prefs-migration.sql' : 'שגיאה בשמירה');
+        console.error('display prefs', error);
+        return;
+      }
+      await loadFamilyPrefs();
+      toast('✓ שניכם תראו אותו דבר');
+    }
 
-    if (t !== 'sstk') toast('✓ נשמר');
+    if (t !== 'sstk' && t !== 'display') toast('✓ נשמר');
     closeModal();
     const page = document.querySelector('.page.active')?.id?.replace('page-', '');
     if (page) renderPage(page);

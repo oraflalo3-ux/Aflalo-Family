@@ -134,6 +134,19 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .hist-table tr.hist-draft td { color: var(--text2); font-style: italic; }
 .hist-table tr.hist-empty td { color: var(--text3); }
 
+.cf-sec-title { font-size: 11px; font-weight: 600; color: var(--text2); margin: .65rem 0 .35rem; padding-top: .5rem; border-top: 0.5px solid var(--border); }
+.cf-sec-title:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+.ov-summary-row .met.ov-hero .mv { font-size: 22px; }
+.ov-more-details { margin-bottom: 1rem; font-size: 13px; color: var(--text2); }
+.ov-more-details summary { cursor: pointer; padding: .5rem 0; font-weight: 600; }
+.cf-tpl-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .75rem; }
+.cf-tpl { font-size: 11px !important; min-height: 32px !important; padding: 6px 10px !important; }
+.cf-inline-amt { width: 5.5rem; padding: 6px 8px; font-size: 14px; font-weight: 600; border: 0.5px solid var(--border2); border-radius: 6px; text-align: left; direction: ltr; background: var(--bg2); }
+.cf-inline-amt.g { color: var(--green); }
+.cf-inline-amt.r { color: var(--red); }
+.fin-details summary { cursor: pointer; padding: .65rem 1rem; font-weight: 600; font-size: 13px; }
+.fin-details[open] summary { border-bottom: 0.5px solid var(--border); }
+
 /* Cashflow bar */
 .cfbar { display: flex; gap: 2px; height: 24px; border-radius: var(--radius); overflow: hidden; margin-bottom: .5rem; }
 .cfi { background: var(--green-mid); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 500; }
@@ -298,9 +311,9 @@ html.app-main #config-screen { display: none !important; }
       <div class="hint">מ-<span dir="ltr">API Keys → publishable</span>. באייפון: לחץ והחזק → הדבק</div></div>
     <p id="cfg-status" style="font-size:13px;color:var(--green);margin-bottom:.5rem;min-height:1.2em;font-weight:600"></p>
     <p id="cfg-error" style="font-size:13px;color:var(--red);margin-bottom:.5rem;display:none;line-height:1.5"></p>
-    <button type="button" class="btn primary" id="btn-save-config-go" style="width:100%;justify-content:center;margin-bottom:.5rem;font-size:16px;padding:14px">שמור והמשך לשלב 2 ←</button>
-    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfigSkipTest()">שמור בלי בדיקה (אותו דבר)</button>
-    <button type="button" class="btn sm" id="btn-save-config" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfig()">בדוק חיבור ואז שמור (אופציונלי)</button>
+    <button type="button" class="btn primary" id="btn-save-config-go" style="width:100%;justify-content:center;margin-bottom:.5rem;font-size:16px;padding:14px;touch-action:manipulation;-webkit-appearance:none" onclick="saveConfigGo();return false">שמור והמשך לשלב 2</button>
+    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem;touch-action:manipulation" onclick="saveConfigGo();return false">שמור בלי בדיקה</button>
+    <button type="button" class="btn sm" id="btn-save-config" style="width:100%;justify-content:center;margin-bottom:.5rem;touch-action:manipulation" onclick="if(window.saveConfig){saveConfig(false);}else{saveConfigGo();}return false">בדוק חיבור ואז שמור</button>
     <button type="button" class="btn sm" style="width:100%;justify-content:center" onclick="resetStoredConfig()">נקה הגדרות שמורות</button>
   </div>
 </div>
@@ -311,9 +324,11 @@ html.app-main #config-screen { display: none !important; }
 <div class="topbar">
   <div class="logo">משפחת <span>אפללו</span></div>
   <div class="topbar-actions">
+    <span id="shared-view-badge" class="topbar-meta" title="תצוגה ונתונים משותפים לכל המשפחה">👥</span>
     <span id="conn-badge" class="topbar-meta" title="פרויקט Supabase"></span>
     <span id="user-label" class="topbar-meta"></span>
     <span id="sync-indicator" class="topbar-meta"></span>
+    <button type="button" class="btn sm" onclick="openDisplaySettings()" title="אותה תצוגה לשניכם">תצוגה</button>
     <button type="button" class="btn sm btn-icon-text" onclick="refreshStocks()" title="עדכן מניות"><span class="btn-ico">⟳</span><span class="btn-txt">מניות</span></button>
     <button type="button" class="btn sm" id="btn-logout" title="יציאה" onclick="doLogout(); return false;">יציאה</button>
   </div>
@@ -321,40 +336,31 @@ html.app-main #config-screen { display: none !important; }
 
 <main class="app-content" id="app-content">
 <div id="page-overview" class="page active">
-  <div id="ov-summary" class="mrow"></div>
-  <div class="two">
-    <div>
-      <div class="sec">התראות</div>
-      <div class="card" id="ov-alerts"></div>
-    </div>
-    <div>
-      <div class="sec">תזרים חודשי</div>
-      <div class="card" id="ov-cf"></div>
-    </div>
+  <p id="ov-shared-note" class="hint" style="margin:0 0 .75rem;padding:.5rem .65rem;background:var(--green-light);border-radius:var(--radius);color:var(--green);font-size:12px;line-height:1.5"></p>
+  <div class="sec">לטפל עכשיו</div>
+  <div class="card" id="ov-alerts"></div>
+  <div id="ov-summary" class="mrow ov-summary-row"></div>
+  <div class="sec">תזרים החודש</div>
+  <div class="card" id="ov-cf"></div>
+  <div style="margin:.5rem 0 1rem;display:flex;gap:8px;flex-wrap:wrap">
+    <button type="button" class="btn primary" onclick="goTo('finance', document.querySelector('.nav-item[data-page=finance]'))">פירוט תזרים והוצאות</button>
   </div>
+  <details class="ov-more-details">
+    <summary>עוד: שווי נטו, נכסים וחובות</summary>
+    <div id="ov-details" class="mrow" style="margin-top:.75rem"></div>
+  </details>
 </div>
 
 <div id="page-finance" class="page">
   <div id="fin-summary" class="mrow"></div>
-  <div class="two">
-    <div>
-      <div class="sec">הלוואות</div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">הלוואות</span><button class="btn sm" onclick="om('loan')">+ הוסף</button></div>
-        <div id="loans-list"></div>
-      </div>
-    </div>
-    <div>
-      <div class="sec">כרטיסי אשראי</div>
-      <div class="card">
-        <div class="card-header"><span class="card-title">כרטיסים</span><button class="btn sm" onclick="om('cc')">+ הוסף</button></div>
-        <div id="cc-list"></div>
-      </div>
-    </div>
-  </div>
   <div class="sec">תזרים</div>
   <div class="card">
-    <div class="card-header"><span class="card-title">הכנסות / הוצאות</span><button class="btn sm" onclick="om('cf')">+ הוסף</button></div>
+    <div class="card-header"><span class="card-title">הכנסות / הוצאות</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn sm" onclick="om('cf','fixed')">+ קבועה</button>
+        <button type="button" class="btn sm" onclick="om('cf','variable')">+ משתנה</button>
+      </div>
+    </div>
     <div id="cf-bar"></div>
     <div id="cf-list"></div>
   </div>
@@ -371,6 +377,21 @@ html.app-main #config-screen { display: none !important; }
     <div id="cf-history-years"></div>
     <div id="cf-history-body"></div>
   </div>
+  <details class="fin-details card" style="padding:0;overflow:hidden">
+    <summary>הלוואות וכרטיסי אשראי</summary>
+    <div style="padding:0 1rem 1rem">
+      <div class="sec" style="margin-top:.5rem">הלוואות</div>
+      <div class="card" style="margin-bottom:.75rem">
+        <div class="card-header"><span class="card-title">הלוואות</span><button class="btn sm" onclick="om('loan')">+ הוסף</button></div>
+        <div id="loans-list"></div>
+      </div>
+      <div class="sec">כרטיסי אשראי</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">כרטיסים</span><button class="btn sm" onclick="om('cc')">+ הוסף</button></div>
+        <div id="cc-list"></div>
+      </div>
+    </div>
+  </details>
 </div>
 
 <div id="page-savings" class="page">
@@ -488,6 +509,65 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=20"></script>
+<script>
+/* גיבוי ל-Safari באייפון — עובד גם אם app.js לא נטען */
+window.saveConfigGo = function () {
+  var st = document.getElementById('cfg-status');
+  var er = document.getElementById('cfg-error');
+  function err(m) {
+    if (er) { er.textContent = m; er.style.display = 'block'; }
+    if (st) st.textContent = '';
+  }
+  function ok(msg) {
+    if (er) er.style.display = 'none';
+    if (st) st.textContent = msg || '✓';
+  }
+  try {
+    ok('שומר...');
+    var urlEl = document.getElementById('cfg-url');
+    var keyEl = document.getElementById('cfg-key');
+    if (!urlEl || !keyEl) { err('רענן את הדף'); return; }
+    var u = urlEl.value.trim().replace(/^\/+/, '').replace(/\/rest\/v1\/?$/i, '').replace(/\/+$/, '');
+    if (u.indexOf('http://') === 0) u = 'https://' + u.slice(7);
+    if (u.indexOf('https://') !== 0 && u.indexOf('.supabase.co') !== -1) u = 'https://' + u;
+    var k = keyEl.value.replace(/[\u200B-\u200D\uFEFF]/g, '').replace(/\s/g, '');
+    urlEl.value = u;
+    keyEl.value = k;
+    if (!u || !k) { err('הכנס URL ומפתח Publishable'); return; }
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)) {
+      err('URL שגוי. דוגמה: https://abcdefgh.supabase.co');
+      return;
+    }
+    if (k.length < 20 || (!/^eyJ/i.test(k) && !/^sb_/i.test(k))) {
+      err('מפתח שגוי — העתק Publishable או anon מ-API Keys');
+      return;
+    }
+    localStorage.setItem('sb_url', u);
+    localStorage.setItem('sb_key', k);
+    try {
+      sessionStorage.setItem('sb_url', u);
+      sessionStorage.setItem('sb_key', k);
+    } catch (e2) { /* ignore */ }
+    document.documentElement.classList.remove('app-config', 'app-main');
+    document.documentElement.classList.add('app-login');
+    ok('✓ עובר לשלב 2');
+    var loginErr = document.getElementById('login-error');
+    if (loginErr) {
+      loginErr.textContent = 'שלב 2: הזן אימייל וסיסמה (מ-Supabase → Users)';
+      loginErr.style.display = 'block';
+    }
+    setTimeout(function () {
+      var lu = document.getElementById('login-user');
+      if (lu) lu.focus();
+      if (typeof window.initSupabaseClient === 'function') {
+        try { window.initSupabaseClient(); } catch (e3) { /* ignore */ }
+      }
+    }, 300);
+  } catch (e) {
+    err('לא נשמר: ' + (e.message || 'חסימת Safari — כבה גלישה פרטית'));
+  }
+};
+</script>
+<script src="app.js?v=25"></script>
 </body>
 </html>
