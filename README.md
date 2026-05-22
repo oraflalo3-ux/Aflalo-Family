@@ -25,7 +25,7 @@
    - `partner@bayit.local` + סיסמה חזקה  
    (סמן **Auto Confirm User** כדי שלא תצטרך אימות מייל)
 3. ב-**SQL Editor** הרץ את הקובץ `auth-migration.sql` (מגן על כל הטבלאות — בלי זה הנתונים פתוחים לכולם עם ה-anon key)
-4. בפרויקט קיים: הרץ גם `stocks-migration.sql`, `cashflow-history-migration.sql`, `cashflow-fixed-migration.sql`
+4. בפרויקט קיים: הרץ גם `stocks-migration.sql`, `cashflow-history-migration.sql`, `cashflow-fixed-migration.sql`, `expenses-migration.sql` (לסיכום בוקר)
 
 ### שלב 3 — העלאת קבצים
 העלה את הקבצים הבאים ל-GitHub:
@@ -123,8 +123,27 @@ Aflalo-Family/
 └── schema.sql         ← מסד הנתונים (פרויקט חדש)
 ```
 
+## סיכום בוקר ב-WhatsApp (Edge Function)
+
+1. הרץ `expenses-migration.sql` ב-Supabase (טבלת `expenses` — תאריך בפורמט `YYYY-MM-DD` כמו `reminders`).
+2. התקן [Supabase CLI](https://supabase.com/docs/guides/cli) והתחבר: `supabase login` → `supabase link --project-ref <ref>`.
+3. הגדר סודות (Dashboard → **Edge Functions → Secrets** או CLI):
+
+   | Secret | תיאור |
+   |--------|--------|
+   | `OPENAI_API_KEY` | מפתח OpenAI |
+   | `WHATSAPP_ACCESS_TOKEN` | Token מ-Meta Developer |
+   | `WHATSAPP_PHONE_NUMBER_ID` | מזהה מספר העסק ב-Cloud API |
+   | `WHATSAPP_RECIPIENT_PHONE` | נמען (למשל `972501234567`, בלי +) |
+
+   `SUPABASE_URL` ו-`SUPABASE_SERVICE_ROLE_KEY` מוזרקים אוטומטית בפריסה.
+
+4. פרוס: `supabase functions deploy morning-summary`
+5. בדיקה: `curl -X POST "https://<ref>.supabase.co/functions/v1/morning-summary" -H "Authorization: Bearer <SERVICE_ROLE_KEY>"`
+6. תזמון יומי: **Database → Cron** או `pg_cron` — קריאת POST לאותה כתובת בשעה הרצויה (שעון ישראל מחושב בפונקציה).
+
 ## שדרוגים עתידיים אפשריים
-- Push notifications להתראות (דורש backend קטן)
+- Push notifications להתראות (ממומש חלקית דרך WhatsApp)
 - ייצוא לאקסל
 - גרפים היסטוריים
 - תמיכה במטבע זר

@@ -697,6 +697,8 @@ function setPageLoading(on) {
 
 function goTo(page, btn) {
   if (navBusy) return;
+  const prev = document.querySelector('.page.active')?.id?.replace('page-', '');
+  if (prev === 'daily' && page !== 'daily') teardownShopRealtime();
   if (!isPageVisible(page)) {
     toast('מודול מוסתר — שנה ב״תצוגה משותפת״');
     page = 'overview';
@@ -815,20 +817,47 @@ function carEventLabel(ev, car) {
   return `${ev.type} — ${c}`;
 }
 
-async function completeCarEvent(id) {
+const CAR_KM_REQUIRED_TYPES = ['טסט', 'טיפול תקופתי', 'טיפול שמן', 'תיקון'];
+
+function carServiceRequiresKm(type) {
+  return CAR_KM_REQUIRED_TYPES.includes(type);
+}
+
+let pendingCarEventComplete = null;
+
+function buildCevDoneFormHtml(ev) {
+  const today = new Date().toISOString().split('T')[0];
+  const needsKm = carServiceRequiresKm(ev.type);
+  return `<p class="hint" style="margin-bottom:.75rem">סגירת <strong>${escHtml(ev.type)}</strong> — יירשם ביומן הטיפולים${needsKm ? ' (חובה: תאריך + ק״מ)' : ''}</p>
+    <div class="fg"><label>סוג</label><input id="f_type" value="${escAttr(ev.type)}" readonly></div>
+    <div class="fg"><label>תאריך ביצוע</label><input id="f2" type="date" value="${today}" required></div>
+    <div class="fg"><label>ק״מ ברכב בביצוע ${needsKm ? '(חובה)' : '(אופציונלי)'}</label>
+      <input id="f_km" type="number" min="0" step="1" inputmode="numeric" placeholder="למשל 85420" ${needsKm ? 'required' : ''}></div>
+    <div class="fg"><label>עלות (₪)</label><input id="f4" type="number" min="0" placeholder="0" value="${Number(ev.cost) || ''}"></div>
+    <div class="fg"><label>הערה</label><input id="f3" placeholder="פרטים, מוסך..." value="${escAttr(ev.note || '')}"></div>`;
+}
+
+async function openCompleteCarEvent(id) {
   if (!sb) { toast('לא מחובר'); return; }
-  const { error } = await sb.from('car_events').delete().eq('id', id);
-  if (error) {
-    toast('שגיאה בעדכון');
-    console.error('completeCarEvent', error);
+  const { data: ev, error } = await sb.from('car_events').select('*').eq('id', id).single();
+  if (error || !ev) {
+    toast('לא נמצא אירוע');
     return;
   }
-  toast('✓ בוצע — הוסר מהרשימה');
-  const page = document.querySelector('.page.active')?.id?.replace('page-', '');
-  if (page) await renderPage(page);
-  await renderOverview();
+  pendingCarEventComplete = ev;
+  modalType = 'cev_done';
+  modalTarget = id;
+  document.getElementById('modal-title').textContent = `בוצע: ${ev.type}`;
+  document.getElementById('modal-body').innerHTML = buildCevDoneFormHtml(ev);
+  document.getElementById('modal').classList.add('open');
+  setTimeout(() => document.getElementById('f2')?.focus(), 80);
+}
+
+async function completeCarEvent(id) {
+  await openCompleteCarEvent(id);
 }
 window.completeCarEvent = completeCarEvent;
+window.openCompleteCarEvent = openCompleteCarEvent;
 
 const MONTH_NAMES_HE = ['', 'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני', 'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
 
@@ -848,14 +877,291 @@ function isCfFixed(item) {
   return item.is_fixed === true || item.is_fixed === 'true';
 }
 
-function calcCashflowTotals(cf, props) {
+const CF_SOURCE_LABELS = {
+  loans: 'הלוואות',
+  savings: 'חסכונות',
+  realestate: 'נדל״ן',
+  daily: 'יומיומי',
+  cars: 'רכבים'
+};
+
+/** לאיזה חודש שייכת הוצאה/אירוע (לפי תאריך או החודש הנוכחי אם חסר) */
+function parseCashflowMonthYear(dateStr) {
+  if (!dateStr || !String(dateStr).trim()) return getIsraelYearMonth();
+  const s = String(dateStr).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})/);
+  if (iso) return { year: +iso[1], month: +iso[2] };
+  const my = s.match(/^(\d{1,2})\s*[/.-]\s*(\d{4})/);
+  if (my) return { year: +my[2], month: +my[1] };
+  const ym = s.match(/^(\d{4})\s*[/.-]\s*(\d{1,2})/);
+  if (ym) return { year: +ym[1], month: +ym[2] };
+  const d = new Date(s + 'T12:00:00');
+  if (!isNaN(d.getTime())) {
+    return { year: d.getFullYear(), month: d.getMonth() + 1 };
+  }
+  return getIsraelYearMonth();
+}
+
+function isInCurrentCashflowMonth(dateStr) {
+  const cur = getIsraelYearMonth();
+  const p = parseCashflowMonthYear(dateStr);
+  return p.year === cur.year && p.month === cur.month;
+}
+
+function buildExternalIncomeLines(props) {
+  const lines = [];
+  (props || []).forEach(p => {
+    const amount = Number(p.rental_income || 0);
+    if (amount > 0) {
+      lines.push({
+        key: `prop-inc-${p.id}`,
+        name: `שכירות — ${p.name}`,
+        amount,
+        source: 'realestate'
+      });
+    }
+  });
+  return lines;
+}
+
+let assetExpensesTableOk = true;
+
+const ASSET_TYPE_LABELS = {
+  property: 'נדל״ן',
+  car: 'רכב',
+  loan: 'הלוואה',
+  savings_loan: 'מינוף',
+  savings_cat: 'חסכונות'
+};
+
+function assetExpenseCfSource(assetType) {
+  return { property: 'realestate', car: 'cars', loan: 'loans', savings_loan: 'savings', savings_cat: 'savings' }[assetType] || 'general';
+}
+
+function resolveAssetName(assetType, assetId, ctx) {
+  if (!ctx) return '';
+  if (assetType === 'property') return ctx.props?.find(p => p.id === assetId)?.name || '';
+  if (assetType === 'car') {
+    const c = ctx.cars?.find(x => x.id === assetId);
+    return c ? `${c.make} ${c.model}` : '';
+  }
+  if (assetType === 'loan') return ctx.loans?.find(l => l.id === assetId)?.name || '';
+  if (assetType === 'savings_loan') return ctx.savLoans?.find(l => l.id === assetId)?.name || '';
+  if (assetType === 'savings_cat') return ctx.cats?.find(c => c.id === assetId)?.name || '';
+  return '';
+}
+
+async function fetchAssetExpenses() {
+  if (!sb) return [];
+  const { data, error } = await sb.from('asset_expenses').select('*').order('kind').order('name');
+  if (error) {
+    if (/does not exist|relation/i.test(error.message || '')) {
+      assetExpensesTableOk = false;
+      return null;
+    }
+    console.error('fetchAssetExpenses', error);
+    return [];
+  }
+  assetExpensesTableOk = true;
+  return data || [];
+}
+
+async function upsertMonthlyAssetExpense(assetType, assetId, name, amount) {
+  if (!sb || !assetExpensesTableOk) return;
+  const amt = Number(amount) || 0;
+  const { data: rows } = await sb.from('asset_expenses').select('id')
+    .eq('asset_type', assetType).eq('asset_id', assetId).eq('name', name).eq('kind', 'monthly');
+  const existing = rows?.[0];
+  if (amt > 0) {
+    const row = { asset_type: assetType, asset_id: assetId, name, amount: amt, kind: 'monthly', expense_date: '', note: '' };
+    if (existing) await sb.from('asset_expenses').update({ amount: amt }).eq('id', existing.id);
+    else await sb.from('asset_expenses').insert(row);
+  } else if (existing) await sb.from('asset_expenses').delete().eq('id', existing.id);
+}
+
+function buildAexpFormHtml(kindPreset) {
+  const isMonthly = kindPreset === 'monthly';
+  return `<div class="fg"><label>תיאור</label><input id="f1" placeholder="משכנתא, טסט, דמי ניהול..."></div>
+    <div class="fg"><label>סכום (₪)</label><input id="f2" type="number" placeholder="0"></div>
+    <div class="fg"><label>סוג</label><select id="f3">
+      <option value="monthly" ${isMonthly ? 'selected' : ''}>חודשי — בכל תזרים</option>
+      <option value="once" ${!isMonthly ? 'selected' : ''}>חד-פעמי</option>
+    </select></div>
+    <div class="fg"><label>תאריך (לחד-פעמי)</label><input id="f4" placeholder="${getHebrewMonthYearLabel()}"></div>
+    <div class="fg"><label>הערה</label><input id="f5" placeholder=""></div>`;
+}
+
+function assetExpensesForAsset(assetExpenses, assetType, assetId) {
+  return (assetExpenses || []).filter(e => e.asset_type === assetType && e.asset_id === assetId);
+}
+
+function renderCarServiceLogHtml(logs) {
+  if (!logs.length) {
+    return '<div class="empty" style="padding:.5rem 0">אין טיפולים/טסטים מתועדים עדיין</div>';
+  }
+  return logs.map(l => `
+    <div class="asset-exp-row">
+      <div style="flex:1;min-width:0">
+        <div class="row-name">${escHtml(l.type)} <span class="badge gy">בוצע</span></div>
+        <div class="row-meta">${escHtml(l.performed_date)} · ${fmt(l.odometer_km)} ק״מ${l.note ? ' · ' + escHtml(l.note) : ''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px">
+        ${Number(l.cost) > 0 ? `<span class="row-amount r">₪${fmt(l.cost)}</span>` : ''}
+        <button type="button" class="btn icon-only" onclick="del('car_service_log','${l.id}',true)">🗑</button>
+      </div>
+    </div>`).join('');
+}
+
+function renderAssetExpensesPanel(assetType, assetId, assetExpenses) {
+  if (!assetExpensesTableOk) {
+    return '<p class="hint">הרץ asset-expenses-migration.sql ב-Supabase לניהול הוצאות לפי נכס</p>';
+  }
+  const rows = assetExpensesForAsset(assetExpenses, assetType, assetId);
+  const monthly = rows.filter(r => r.kind === 'monthly');
+  const onceAll = rows.filter(r => r.kind === 'once');
+  const onceMonth = onceAll.filter(r => isInCurrentCashflowMonth(r.expense_date));
+  const sumMonthly = monthly.reduce((a, r) => a + Number(r.amount || 0), 0);
+  const sumOnceMonth = onceMonth.reduce((a, r) => a + Number(r.amount || 0), 0);
+  const kindBadge = k => k === 'monthly' ? '<span class="badge b">חודשי</span>' : '<span class="badge am">חד-פעמי</span>';
+
+  const list = rows.length ? rows.map(e => `
+    <div class="asset-exp-row">
+      <div style="flex:1;min-width:0">
+        <div class="row-name">${escHtml(e.name)} ${kindBadge(e.kind)}</div>
+        <div class="row-meta">${e.kind === 'once' && e.expense_date ? escHtml(e.expense_date) : 'כל חודש'}${e.note ? ' · ' + escHtml(e.note) : ''}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+        <span class="row-amount r">₪${fmt(e.amount)}</span>
+        <button type="button" class="btn icon-only" onclick="del('asset_expenses','${e.id}',true)">🗑</button>
+      </div>
+    </div>`).join('') : '<div class="empty">אין הוצאות מתועדות — הוסף למטה</div>';
+
+  return `<div class="asset-exp-panel">
+    <div class="asset-exp-hdr">
+      <span class="lbl">הוצאות על הנכס</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn sm" onclick="om('aexp','${assetType}:${assetId}:monthly')">+ חודשי</button>
+        <button type="button" class="btn sm" onclick="om('aexp','${assetType}:${assetId}:once')">+ חד-פעמי</button>
+      </div>
+    </div>
+    ${list}
+    <div class="asset-exp-totals">
+      ${sumMonthly ? `<span>סה״כ חודשי: <strong class="r">₪${fmt(sumMonthly)}</strong></span>` : ''}
+      ${sumOnceMonth ? `<span>חד-פעמי החודש (${getHebrewMonthYearLabel()}): <strong class="r">₪${fmt(sumOnceMonth)}</strong></span>` : ''}
+    </div>
+  </div>`;
+}
+
+function buildExternalExpenseLinesLegacy(loans, savLoans, props, activities, propExpenses, carEvents, cars) {
+  const lines = [];
+  const propById = Object.fromEntries((props || []).map(p => [p.id, p]));
+  const carById = Object.fromEntries((cars || []).map(c => [c.id, c]));
+  (loans || []).forEach(l => {
+    const amount = Number(l.monthly || 0);
+    if (amount > 0) lines.push({ key: `loan-${l.id}`, name: `הלוואה — ${l.name}`, amount, source: 'loans', kind: 'monthly' });
+  });
+  (savLoans || []).forEach(l => {
+    const amount = Number(l.monthly || 0);
+    if (amount > 0) lines.push({ key: `sloan-${l.id}`, name: `מינוף — ${l.name}`, amount, source: 'savings', kind: 'monthly' });
+  });
+  (props || []).forEach(p => {
+    const mort = Number(p.monthly_mortgage || 0);
+    const exp = Number(p.monthly_expenses || 0);
+    if (mort > 0) lines.push({ key: `prop-mort-${p.id}`, name: `משכנתא — ${p.name}`, amount: mort, source: 'realestate', kind: 'monthly' });
+    if (exp > 0) lines.push({ key: `prop-exp-${p.id}`, name: `הוצאות נכס — ${p.name}`, amount: exp, source: 'realestate', kind: 'monthly' });
+  });
+  (propExpenses || []).forEach(e => {
+    if (!isInCurrentCashflowMonth(e.expense_date)) return;
+    const amount = Number(e.amount || 0);
+    if (amount <= 0) return;
+    const p = propById[e.property_id];
+    lines.push({ key: `pexp-${e.id}`, name: `חד-פעמי — ${p ? p.name + ': ' : ''}${e.name}`, amount, source: 'realestate', kind: 'once' });
+  });
+  (carEvents || []).forEach(ev => {
+    if (!isInCurrentCashflowMonth(ev.event_date)) return;
+    const amount = Number(ev.cost || 0);
+    if (amount <= 0) return;
+    const car = carById[ev.car_id];
+    lines.push({ key: `cev-${ev.id}`, name: `אירוע — ${ev.type} (${car ? `${car.make} ${car.model}` : 'רכב'})`, amount, source: 'cars', kind: 'once' });
+  });
+  (activities || []).forEach(a => {
+    const amount = Number(a.cost || 0);
+    if (amount > 0) lines.push({ key: `act-${a.id}`, name: `חוג — ${a.name}${a.child ? ` (${a.child})` : ''}`, amount, source: 'daily', kind: 'monthly' });
+  });
+  return lines;
+}
+
+function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy) {
+  if (assetExpenses === null) {
+    return buildExternalExpenseLinesLegacy(
+      legacy.loans, legacy.savLoans, props, activities, legacy.propExpenses, legacy.carEvents, legacy.cars
+    );
+  }
+  const lines = [];
+  (assetExpenses || []).forEach(e => {
+    if (e.kind === 'once' && !isInCurrentCashflowMonth(e.expense_date)) return;
+    const amount = Number(e.amount || 0);
+    if (amount <= 0) return;
+    const assetName = resolveAssetName(e.asset_type, e.asset_id, ctx);
+    lines.push({
+      key: `ae-${e.id}`,
+      name: `${assetName ? assetName + ' — ' : ''}${e.name}`,
+      amount,
+      source: assetExpenseCfSource(e.asset_type),
+      kind: e.kind === 'once' ? 'once' : 'monthly'
+    });
+  });
+  (activities || []).forEach(a => {
+    const amount = Number(a.cost || 0);
+    if (amount > 0) {
+      lines.push({
+        key: `act-${a.id}`,
+        name: `חוג — ${a.name}${a.child ? ` (${a.child})` : ''}`,
+        amount,
+        source: 'daily',
+        kind: 'monthly'
+      });
+    }
+  });
+  return lines;
+}
+
+function sumCfLines(lines) {
+  return (lines || []).reduce((a, l) => a + Number(l.amount || 0), 0);
+}
+
+function calcLoanMonthlyPayments(assetExpenses, loans, savLoans, ctx, legacy) {
+  const lines = buildExternalExpenseLines(assetExpenses, [], [], ctx, legacy);
+  return sumCfLines(lines.filter(l => l.source === 'loans' || l.source === 'savings'));
+}
+
+function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacyBundle) {
   const cfInc = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0);
   const cfExp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0);
-  const propInc = (props || []).reduce((a, p) => a + Number(p.rental_income || 0), 0);
-  const propExp = (props || []).reduce((a, p) => a + Number(p.monthly_mortgage || 0) + Number(p.monthly_expenses || 0), 0);
-  const income = cfInc + propInc;
-  const expense = cfExp + propExp;
-  return { income, expense, net: income - expense };
+  const ctx = { props, cars: legacyBundle.cars, loans, savLoans, cats: legacyBundle.cats };
+  const externalIncome = buildExternalIncomeLines(props);
+  const externalExpense = buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacyBundle);
+  const income = cfInc + sumCfLines(externalIncome);
+  const expense = cfExp + sumCfLines(externalExpense);
+  const loanMonthly = sumCfLines(externalExpense.filter(l => (l.source === 'loans' || l.source === 'savings') && l.kind === 'monthly'));
+  const propMonthly = sumCfLines(externalExpense.filter(l => l.source === 'realestate' && l.kind === 'monthly'));
+  const propOnce = sumCfLines(externalExpense.filter(l => l.source === 'realestate' && l.kind === 'once'));
+  const carsOnce = sumCfLines(externalExpense.filter(l => l.source === 'cars'));
+  const activitiesMonthly = sumCfLines(externalExpense.filter(l => l.source === 'daily'));
+  return {
+    income,
+    expense,
+    net: income - expense,
+    cfInc,
+    cfExp,
+    externalIncome,
+    externalExpense,
+    loanMonthly,
+    propMonthly,
+    propOnce,
+    carsOnce,
+    activitiesMonthly
+  };
 }
 
 async function fetchCashflowMonthly() {
@@ -870,9 +1176,19 @@ async function fetchCashflowMonthly() {
   return (data || []).sort((a, b) => b.year - a.year || b.month - a.month);
 }
 
+async function fetchCashflowBundle() {
+  const [cf, props, loans, savLoans, activities, propExpenses, carEvents, cars, cats, assetExpenses] = await Promise.all([
+    fetch_('cashflow'), fetch_('properties'), fetch_('loans'), fetch_('savings_loans'), fetch_('activities'),
+    fetch_('property_expenses'), fetch_('car_events'), fetch_('cars'), fetch_('savings_cats'),
+    fetchAssetExpenses()
+  ]);
+  const legacy = { loans, savLoans, propExpenses, carEvents, cars, cats };
+  return { cf, props, loans, savLoans, activities, propExpenses, carEvents, cars, cats, assetExpenses, legacy };
+}
+
 async function saveCashflowMonthSnapshot(year, month) {
-  const [cf, props] = await Promise.all([fetch_('cashflow'), fetch_('properties')]);
-  const t = calcCashflowTotals(cf, props);
+  const b = await fetchCashflowBundle();
+  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy);
   const { error } = await sb.from('cashflow_monthly').upsert({
     year,
     month,
@@ -896,12 +1212,15 @@ async function closeCashflowMonth(year, month) {
   if (!sb) { toast('לא מחובר'); return; }
   const y = year ?? getIsraelYearMonth().year;
   const m = month ?? getIsraelYearMonth().month;
-  const [cf, props] = await Promise.all([fetch_('cashflow'), fetch_('properties')]);
-  const t = calcCashflowTotals(cf, props);
+  const b = await fetchCashflowBundle();
+  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy);
   const label = `${MONTH_NAMES_HE[m]} ${y}`;
   const rows = await fetchCashflowMonthly();
   const exists = rows.some(r => r.year === y && r.month === m);
-  const msg = `${exists ? 'לעדכן' : 'לשמור'} סיכום ${label}?\n\nהכנסות: ₪${fmt(t.income)}\nהוצאות: ₪${fmt(t.expense)}\nנטו: ₪${fmt(t.net)}\n\n(כולל תזרים + נדל״ן)`;
+  const extNote = t.externalExpense.length
+    ? `\n(כולל ${t.externalExpense.length} הוצאות חודשיות ממודולים אחרים)`
+    : '';
+  const msg = `${exists ? 'לעדכן' : 'לשמור'} סיכום ${label}?\n\nהכנסות: ₪${fmt(t.income)}\nהוצאות: ₪${fmt(t.expense)}\nנטו: ₪${fmt(t.net)}${extNote}\n\n(תזרים + כל ההוצאות/הכנסות החודשיות במערכת)`;
   if (!confirm(msg)) return;
   const ok = await saveCashflowMonthSnapshot(y, m);
   if (!ok) return;
@@ -917,11 +1236,8 @@ function setCfHistoryYear(y) {
 }
 
 async function renderCashflowHistoryOnly() {
-  const [rows, cf, props] = await Promise.all([
-    fetchCashflowMonthly(),
-    fetch_('cashflow'),
-    fetch_('properties')
-  ]);
+  const [rows, b] = await Promise.all([fetchCashflowMonthly(), fetchCashflowBundle()]);
+  const { cf, props, loans, savLoans, activities, assetExpenses, legacy } = b;
   const { year: curY, month: curM } = getIsraelYearMonth();
   const minY = rows.length ? Math.min(...rows.map(r => r.year)) : curY;
   const maxY = Math.max(curY, 2028, rows.length ? Math.max(...rows.map(r => r.year)) : curY);
@@ -939,7 +1255,9 @@ async function renderCashflowHistoryOnly() {
     </div>`);
 
   const yearRows = rows.filter(r => r.year === cfHistoryYear);
-  const draft = cfHistoryYear === curY ? calcCashflowTotals(cf, props) : null;
+  const draft = cfHistoryYear === curY
+    ? calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy)
+    : null;
 
   let yInc = 0;
   let yExp = 0;
@@ -1050,12 +1368,13 @@ async function fetch_(table, order = 'created_at') {
 
 // ── Overview ──────────────────────────────────────────────
 async function renderOverview() {
-  const [loans, cc, cf, cats, accs, stocks, savLoans, props, alertDefs, cars, carEvents] = await Promise.all([
+  const [loans, cc, cf, cats, accs, stocks, savLoans, props, activities, assetExpenses, alertDefs, cars, carEvents, propExpenses] = await Promise.all([
     fetch_('loans'), fetch_('credit_cards'), fetch_('cashflow'),
     fetch_('savings_cats'), fetch_('savings_accounts'), fetch_('savings_stocks'),
-    fetch_('savings_loans'), fetch_('properties'), fetch_('alert_defs'),
-    fetch_('cars'), fetch_('car_events', 'event_date')
+    fetch_('savings_loans'), fetch_('properties'), fetch_('activities'), fetchAssetExpenses(),
+    fetch_('alert_defs'), fetch_('cars'), fetch_('car_events', 'event_date'), fetch_('property_expenses')
   ]);
+  const legacy = { loans, savLoans, propExpenses, carEvents, cars, cats };
   const carById = Object.fromEntries(cars.map(c => [c.id, c]));
   const overdueCarEvents = carEvents
     .filter(e => isCarEventOverdue(e.event_date))
@@ -1070,13 +1389,15 @@ async function renderOverview() {
   const totalDebt = loanTotal + reMort + savLoanTotal;
   const netWorth = totalAssets - totalDebt;
 
-  const { income, expense: expenses, net: cfNet } = calcCashflowTotals(cf, props);
+  const cfTotals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy);
+  const { income, expense: expenses, net: cfNet } = cfTotals;
 
   const fixedInc = cf.filter(c => c.type === 'income' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const varInc = cf.filter(c => c.type === 'income' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
-  const rentInc = props.reduce((a, p) => a + Number(p.rental_income || 0), 0);
+  const rentInc = sumCfLines(cfTotals.externalIncome);
   const fixedExp = cf.filter(c => c.type === 'expense' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const varExp = cf.filter(c => c.type === 'expense' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
+  const { loanMonthly, propMonthly, propOnce, carsOnce, activitiesMonthly } = cfTotals;
   const monthLabel = getHebrewMonthYearLabel();
 
   el('ov-hero', `
@@ -1097,10 +1418,26 @@ async function renderOverview() {
   }
   el('ov-income', incomeMet.join(''));
 
-  el('ov-expenses', `
-    <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv r">₪${fmt(fixedExp)}</div></div>
-    <div class="met"><div class="ml">הוצאות משתנות</div><div class="mv r">₪${fmt(varExp)}</div></div>
-  `);
+  const expMet = [
+    `<div class="met"><div class="ml">הוצאות קבועות</div><div class="mv r">₪${fmt(fixedExp)}</div></div>`,
+    `<div class="met"><div class="ml">הוצאות משתנות</div><div class="mv r">₪${fmt(varExp)}</div></div>`
+  ];
+  if (propMonthly > 0) {
+    expMet.push(`<div class="met"><div class="ml">נדל״ן (חודשי)</div><div class="mv r">₪${fmt(propMonthly)}</div></div>`);
+  }
+  if (loanMonthly > 0) {
+    expMet.push(`<div class="met"><div class="ml">החזרי הלוואות</div><div class="mv r">₪${fmt(loanMonthly)}</div></div>`);
+  }
+  if (propOnce > 0) {
+    expMet.push(`<div class="met"><div class="ml">נדל״ן חד-פעמי (החודש)</div><div class="mv r">₪${fmt(propOnce)}</div></div>`);
+  }
+  if (carsOnce > 0) {
+    expMet.push(`<div class="met"><div class="ml">רכב (החודש)</div><div class="mv r">₪${fmt(carsOnce)}</div></div>`);
+  }
+  if (activitiesMonthly > 0) {
+    expMet.push(`<div class="met"><div class="ml">חוגים (חודשי)</div><div class="mv r">₪${fmt(activitiesMonthly)}</div></div>`);
+  }
+  el('ov-expenses', expMet.join(''));
 
   el('ov-quick', `
     <button type="button" class="quick-chip primary-chip" onclick="goTo('finance', document.querySelector('.nav-item[data-page=finance]'))">💰 תזרים ועדכון סכומים</button>
@@ -1113,10 +1450,9 @@ async function renderOverview() {
   if (cfTitle) cfTitle.textContent = `תזרים · ${monthLabel}`;
 
   el('ov-details', `
-    <div class="met"><div class="ml">שווי נטו</div><div class="mv g">₪${fmt(netWorth)}</div></div>
+    <div class="met"><div class="ml">שווי נטו</div><div class="mv ${netWorth >= 0 ? 'g' : 'r'}">₪${fmt(netWorth)}</div></div>
     <div class="met"><div class="ml">נכסים</div><div class="mv b">₪${fmt(totalAssets)}</div></div>
-    <div class="met"><div class="ml">חובות</div><div class="mv r">₪${fmt(totalDebt)}</div></div>
-    <div class="met"><div class="ml">חובות כולל</div><div class="mv r">₪${fmt(totalDebt)}</div><div class="ms">הלוואות+משכנתאות+מינוף</div></div>
+    <div class="met"><div class="ml">חוב</div><div class="mv r">₪${fmt(totalDebt)}</div><div class="ms">הלוואות+משכנתאות+מינוף</div></div>
   `);
 
   // התראות — רק באיחור (לא "בקרוב")
@@ -1131,7 +1467,7 @@ async function renderOverview() {
           <div class="row-name">${carEventLabel(ev, car)}</div>
           <div class="row-meta">${dueLabel(days)} · ${ev.event_date}${ev.note ? ' · ' + ev.note : ''}</div>
         </div>
-        <button type="button" class="btn sm btn-done" onclick="completeCarEvent('${ev.id}')">✓ בוצע</button>
+        <button type="button" class="btn sm btn-done" onclick="openCompleteCarEvent('${ev.id}')">✓ בוצע</button>
       </div>`;
     }),
     ...overdueAlerts.map(a => {
@@ -1169,14 +1505,17 @@ function calcSavTotal(cats, accs, stocks, savLoans) {
   return accTotal + stTotal - loanTotal;
 }
 
-function renderLoansListHtml(loans) {
+function renderLoansListHtml(loans, assetExpenses) {
   return loans.map(l => `
-    <div class="row">
-      <div><div class="row-name">${l.name}</div><div class="row-meta">${l.note || ''}</div></div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <div style="text-align:left"><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">₪${fmt(l.monthly)}/חודש</div></div>
-        <button class="btn icon-only" onclick="del('loans','${l.id}',true)">🗑</button>
+    <div class="block" style="margin-bottom:.5rem;border:0.5px solid var(--border);border-radius:var(--radius-lg);overflow:hidden">
+      <div class="row" style="padding:.75rem 1rem;border:none">
+        <div><div class="row-name">${l.name}</div><div class="row-meta">${l.note || ''}</div></div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="text-align:left"><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">יתרה</div></div>
+          <button class="btn icon-only" onclick="del('loans','${l.id}',true)">🗑</button>
+        </div>
       </div>
+      ${renderAssetExpensesPanel('loan', l.id, assetExpenses)}
     </div>`).join('') || '<div class="empty">אין הלוואות — לחץ + הוסף</div>';
 }
 
@@ -1221,16 +1560,48 @@ function renderCashflowTableBody(items, emptyText) {
   return sortCfItems(items).map(renderCashflowTableRow).join('');
 }
 
-function renderCashflowTables(cf) {
+function renderExternalCfRow(line) {
+  const src = CF_SOURCE_LABELS[line.source] || line.source;
+  const kindLbl = line.kind === 'once' ? 'חד-פעמי' : 'חודשי';
+  return `<tr class="cf-ext-row">
+    <td class="cf-t-name">${escHtml(line.name)}</td>
+    <td class="cf-t-type"><span class="badge ${line.kind === 'once' ? 'am' : 'b'}">${kindLbl}</span> <span class="cf-src-tag">${escHtml(src)}</span></td>
+    <td class="cf-t-amt r">₪${fmt(line.amount)}</td>
+    <td class="cf-t-act"><span class="cf-edit-hint">ניהול ב${escHtml(src)}</span></td>
+  </tr>`;
+}
+
+function renderCashflowTableSection(cfItems, externalLines, emptyText) {
+  let html = '';
+  if (cfItems.length) html += renderCashflowTableBody(cfItems, '');
+  if (externalLines.length) {
+    if (cfItems.length) {
+      html += `<tr class="cf-sep-row"><td colspan="4">ממודולים אחרים (חודשי)</td></tr>`;
+    }
+    html += externalLines.map(renderExternalCfRow).join('');
+  }
+  if (!html) html = renderCashflowTableBody([], emptyText);
+  return html;
+}
+
+function renderCashflowTables(cf, props, loans, savLoans, activities, assetExpenses, legacy) {
   const income = cf.filter(c => c.type === 'income');
   const expense = cf.filter(c => c.type === 'expense');
-  const incTotal = income.reduce((a, b) => a + Number(b.amount), 0);
-  const expTotal = expense.reduce((a, b) => a + Number(b.amount), 0);
+  const totals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy);
+  const monthLbl = getHebrewMonthYearLabel();
 
-  el('cf-income-tbody', renderCashflowTableBody(income, 'אין הכנסות — לחץ + קבועה או + משתנה'));
-  el('cf-expense-tbody', renderCashflowTableBody(expense, 'אין הוצאות — לחץ + קבועה או + משתנה'));
-  el('cf-income-total', `₪${fmt(incTotal)}`);
-  el('cf-expense-total', `₪${fmt(expTotal)}`);
+  el('cf-income-tbody', renderCashflowTableSection(
+    income,
+    totals.externalIncome,
+    'אין הכנסות — הוסף בתזרים או שכירות בנדל״ן'
+  ));
+  el('cf-expense-tbody', renderCashflowTableSection(
+    expense,
+    totals.externalExpense,
+    `אין הוצאות — הוסף בתזרים או הוצאות חודשיות/חד-פעמיות (${monthLbl}) במודולים`
+  ));
+  el('cf-income-total', `₪${fmt(totals.income)}`);
+  el('cf-expense-total', `₪${fmt(totals.expense)}`);
 }
 
 async function saveCfAmount(id, val) {
@@ -1270,21 +1641,20 @@ window.toggleCfFixed = toggleCfFixed;
 
 // ── Finance ───────────────────────────────────────────────
 async function renderFinance() {
-  const [loans, cc, cf, props] = await Promise.all([
-    fetch_('loans'), fetch_('credit_cards'), fetch_('cashflow'), fetch_('properties')
+  const [loans, savLoans, cc, b] = await Promise.all([
+    fetch_('loans'), fetch_('savings_loans'), fetch_('credit_cards'), fetchCashflowBundle()
   ]);
+  const { cf, props, activities, assetExpenses, legacy } = b;
 
-  const { income: inc, expense: exp } = calcCashflowTotals(cf, props);
-  const debt = loans.reduce((a, b) => a + Number(b.balance), 0);
+  const { income: inc, expense: exp, net } = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy);
 
   el('fin-summary', `
-    <div class="met"><div class="ml">יתרה חודשית</div><div class="mv ${inc - exp >= 0 ? 'g' : 'r'}">₪${fmt(inc - exp)}</div></div>
-    <div class="met"><div class="ml">הלוואות</div><div class="mv r">₪${fmt(debt)}</div></div>
     <div class="met"><div class="ml">הכנסות</div><div class="mv g">₪${fmt(inc)}</div></div>
-    <div class="met"><div class="ml">הוצאות</div><div class="mv">₪${fmt(exp)}</div></div>
+    <div class="met"><div class="ml">הוצאות</div><div class="mv r">₪${fmt(exp)}</div></div>
+    <div class="met"><div class="ml">יתרה חודשית</div><div class="mv ${net >= 0 ? 'g' : 'r'}">₪${fmt(net)}</div></div>
   `);
 
-  el('loans-list', renderLoansListHtml(loans));
+  el('loans-list', renderLoansListHtml(loans, assetExpenses));
 
   el('cc-list', cc.map(c => {
     const pct = Math.min(100, Math.round(c.used / c.credit_limit * 100));
@@ -1299,25 +1669,36 @@ async function renderFinance() {
     </div>`;
   }).join('') || '<div class="empty">אין כרטיסים</div>');
 
-  const tot = inc + exp || 1;
-  const ip = Math.round(inc / tot * 100);
-  el('cf-bar', `
-    <div class="cfbar"><div class="cfi" style="width:${ip}%">₪${fmt(inc)}</div><div class="cfe" style="width:${100 - ip}%">₪${fmt(exp)}</div></div>
-    <div style="font-size:11px;color:var(--text2);margin-bottom:.5rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
-  `);
+  const tot = inc + exp;
+  if (!tot) {
+    el('cf-bar', '<p class="hint" style="margin:0">הוסיפו הכנסות והוצאות כדי לראות את היחס</p>');
+  } else {
+    const ip = Math.max(8, Math.round(inc / tot * 100));
+    const ep = 100 - ip;
+    el('cf-bar', `
+      <div class="cfbar" role="img" aria-label="הכנסות ${fmt(inc)} שקל, הוצאות ${fmt(exp)} שקל">
+        <div class="cfi" style="width:${ip}%">₪${fmt(inc)}</div>
+        <div class="cfe" style="width:${ep}%">₪${fmt(exp)}</div>
+      </div>
+      <div class="cfbar-legend">
+        <span class="cfbar-legend-item"><span class="cf-legend-dot inc"></span>הכנסות</span>
+        <span class="cfbar-legend-item"><span class="cf-legend-dot exp"></span>הוצאות</span>
+      </div>`);
+  }
 
-  renderCashflowTables(cf);
+  renderCashflowTables(cf, props, loans, savLoans, activities, assetExpenses, legacy);
 
   await renderCashflowHistoryOnly();
 }
 
 // ── Savings ───────────────────────────────────────────────
 async function renderSavings() {
-  const [cats, accs, stocks, savLoans] = await Promise.all([
+  const [cats, accs, stocks, savLoans, assetExpenses] = await Promise.all([
     fetch_('savings_cats', 'display_order'),
     fetch_('savings_accounts'),
     fetch_('savings_stocks'),
-    fetch_('savings_loans')
+    fetch_('savings_loans'),
+    fetchAssetExpenses()
   ]);
 
   const totalAcc = accs.reduce((a, b) => a + Number(b.amount || 0), 0);
@@ -1379,6 +1760,7 @@ async function renderSavings() {
               <div class="row-meta" style="margin-top:2px">יעד ₪${fmt(a.goal)} · ${pct}%</div>` : ''}</div>
             <div style="display:flex;align-items:center;gap:5px">
               <span class="row-amount g">₪${fmt(a.amount)}</span>
+              <button type="button" class="btn sm" onclick="om('sacc_edit','${a.id}')" title="עריכה">✏️</button>
               <button class="btn icon-only" onclick="del('savings_accounts','${a.id}',true)">🗑</button>
             </div></div>`;
     }).join('')}
@@ -1391,6 +1773,7 @@ async function renderSavings() {
               <span class="stk-nm">${s.name}</span>
               ${s.change_pct != null ? `<span class="stk-chg ${s.change_pct >= 0 ? 'stk-up' : 'stk-dn'}">${s.change_pct >= 0 ? '+' : ''}${Number(s.change_pct).toFixed(2)}%</span>` : ''}
               ${p ? `<span style="font-size:13px;font-weight:600">${isIL ? '₪' : '$'}${fmtU(p)}</span>` : '<span class="ld"></span>'}
+              <button type="button" class="btn sm" onclick="om('sstk_edit','${s.id}')" title="עריכה">✏️</button>
               <button class="btn icon-only" onclick="del('savings_stocks','${s.id}',true)">🗑</button>
             </div>
             <div style="font-size:11px;color:var(--text3);margin-top:2px">${s.units} יח׳${v ? ` · ${isIL ? '₪' : '$'}${fmt(v)}${!isIL ? ` (~₪${fmt(vils)})` : ''}` : ' · ממתין...'}</div>
@@ -1398,14 +1781,20 @@ async function renderSavings() {
     }).join('')}
         ${catLoans.length ? `<div style="padding:.7rem 1rem;background:rgba(216,90,48,.04);border-top:0.5px solid var(--border)">
           <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:.5rem">🔴 הלוואות על קטגוריה זו</div>
-          ${catLoans.map(l => `<div class="row">
+          ${catLoans.map(l => `<div style="border-bottom:0.5px solid var(--border)">
+            <div class="row" style="border:none">
             <div style="flex:1"><div class="row-name">${l.name}</div><div class="row-meta">${l.note || ''} · ${l.rate}%</div></div>
             <div style="display:flex;align-items:center;gap:5px;text-align:left">
-              <div><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">₪${fmt(l.monthly)}/חודש</div></div>
+              <div><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">יתרה</div></div>
+              <button type="button" class="btn sm" onclick="om('sloan_edit','${l.id}')" title="עריכה">✏️</button>
               <button class="btn icon-only" onclick="del('savings_loans','${l.id}',true)">🗑</button>
-            </div></div>`).join('')}
+            </div></div>
+            ${renderAssetExpensesPanel('savings_loan', l.id, assetExpenses)}
+          </div>`).join('')}
         </div>` : ''}
+        ${renderAssetExpensesPanel('savings_cat', cat.id, assetExpenses)}
         <div class="block-actions">
+          <button type="button" class="btn sm" onclick="om('scat_edit','${cat.id}')">✏️ עדכן קטגוריה</button>
           ${cat.type !== 'stocks' ? `<button class="btn sm" onclick="om('sacc','${cat.id}')">+ חשבון</button>` : ''}
           <button class="btn sm" onclick="om('sstk','${cat.id}')">+ מניה</button>
           <button class="btn sm" onclick="om('sloan','${cat.id}')">+ הלוואה</button>
@@ -1418,7 +1807,7 @@ async function renderSavings() {
 
 // ── Real Estate ───────────────────────────────────────────
 async function renderRE() {
-  const [props, expenses] = await Promise.all([fetch_('properties'), fetch_('property_expenses')]);
+  const [props, assetExpenses] = await Promise.all([fetch_('properties'), fetchAssetExpenses()]);
   const totalVal = props.reduce((a, p) => a + Number(p.value || 0), 0);
   const totalMort = props.reduce((a, p) => a + Number(p.mortgage || 0), 0);
   const totalRent = props.reduce((a, p) => a + Number(p.rental_income || 0), 0);
@@ -1433,7 +1822,6 @@ async function renderRE() {
   el('props-list', props.map(p => {
     const eq = Number(p.value || 0) - Number(p.mortgage || 0);
     const net = Number(p.rental_income || 0) - Number(p.monthly_mortgage || 0) - Number(p.monthly_expenses || 0);
-    const propExp = expenses.filter(e => e.property_id === p.id);
     const isOpen = openBlocks['prop_' + p.id];
     return `<div class="block">
       <div class="block-hdr" onclick="toggleBlock('prop_${p.id}','propb_${p.id}')">
@@ -1458,18 +1846,7 @@ async function renderRE() {
           <div class="prop-stat"><div class="ps-l">תזרים נטו</div><div class="ps-v ${net >= 0 ? 'g' : 'r'}">₪${fmt(net)}</div></div>` : ''}
         </div>
         <div style="padding:0 1rem .5rem;font-size:11px;color:var(--text2)">${p.address || ''} · הערכה: ${p.last_valuation_date || '—'}</div>
-        <div style="padding:.6rem 1rem;border-top:0.5px solid var(--border)">
-          <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:.5rem;display:flex;justify-content:space-between">
-            הוצאות חד-פעמיות
-            <button class="btn sm" onclick="om('pexp','${p.id}')">+ הוסף</button>
-          </div>
-          ${propExp.map(e => `<div class="row">
-            <div><div class="row-name">${e.name}</div><div class="row-meta">${e.expense_date || ''}</div></div>
-            <div style="display:flex;gap:5px;align-items:center">
-              <span class="row-amount r">₪${fmt(e.amount)}</span>
-              <button class="btn icon-only" onclick="del('property_expenses','${e.id}',true)">🗑</button>
-            </div></div>`).join('') || '<div class="empty">אין</div>'}
-        </div>
+        ${renderAssetExpensesPanel('property', p.id, assetExpenses)}
         <div class="block-actions">
           <button class="btn sm" onclick="om('prop_edit','${p.id}')">✏️ עדכן</button>
           <button class="btn sm danger" onclick="del('properties','${p.id}',true)" style="margin-right:auto">🗑 מחק</button>
@@ -1480,8 +1857,21 @@ async function renderRE() {
 }
 
 // ── Cars ──────────────────────────────────────────────────
+async function fetchCarServiceLog() {
+  if (!sb) return [];
+  const { data, error } = await sb.from('car_service_log').select('*');
+  if (error) {
+    if (/does not exist|relation/i.test(error.message || '')) return [];
+    console.error('fetchCarServiceLog', error);
+    return [];
+  }
+  return (data || []).sort((a, b) => (b.performed_date || '').localeCompare(a.performed_date || ''));
+}
+
 async function renderCars() {
-  const [cars, events] = await Promise.all([fetch_('cars'), fetch_('car_events', 'event_date')]);
+  const [cars, events, assetExpenses, serviceLog] = await Promise.all([
+    fetch_('cars'), fetch_('car_events', 'event_date'), fetchAssetExpenses(), fetchCarServiceLog()
+  ]);
   const upcoming = events.filter(e => getDueDays(e.event_date) <= 45).length;
 
   el('cars-summary', `
@@ -1498,7 +1888,7 @@ async function renderCars() {
         <div class="block-icon" style="background:var(--blue-light)">${urgent ? '⚠️' : '🚗'}</div>
         <div style="flex:1">
           <div style="font-size:13px;font-weight:600">${car.make} ${car.model} (${car.year})</div>
-          <div class="row-meta">${car.plate}</div>
+          <div class="row-meta">${car.plate}${car.odometer_km ? ` · ${fmt(car.odometer_km)} ק״מ` : ''}</div>
         </div>
         ${urgent ? '<span class="badge am">דורש טיפול</span>' : ''}
         <span class="chev ${isOpen ? 'open' : ''}">▾</span>
@@ -1506,7 +1896,7 @@ async function renderCars() {
       <div id="carb_${car.id}" class="block-body ${isOpen ? 'open' : ''}">
         <div style="padding:.7rem 1rem">
           <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:.5rem;display:flex;justify-content:space-between">
-            אירועים <button class="btn sm" onclick="om('cev','${car.id}')">+ הוסף</button>
+            לטפל / מתוכנן <button class="btn sm" onclick="om('cev','${car.id}')">+ תזכורת</button>
           </div>
           ${carEvents.map(ev => {
       const days = getDueDays(ev.event_date);
@@ -1516,11 +1906,16 @@ async function renderCars() {
               <div style="flex:1"><div class="row-name">${ev.type}${overdue ? ' <span class="badge r">באיחור</span>' : ''}</div>${ev.note ? `<div class="row-meta">${ev.note}</div>` : ''}</div>
               ${ev.cost ? `<span class="row-amount">₪${fmt(ev.cost)}</span>` : ''}
               <span style="font-size:11px;color:var(--text3);direction:ltr">${ev.event_date}</span>
-              <button type="button" class="btn sm" onclick="completeCarEvent('${ev.id}')" title="בוצע — יוסר">✓</button>
+              <button type="button" class="btn sm btn-done" onclick="openCompleteCarEvent('${ev.id}')" title="בוצע — תיעוד תאריך וק״מ">✓ בוצע</button>
               <button class="btn icon-only" onclick="del('car_events','${ev.id}',true)">🗑</button>
             </div>`;
-    }).join('') || '<div class="empty">אין אירועים</div>'}
+    }).join('') || '<div class="empty">אין תזכורות פתוחות</div>'}
         </div>
+        <div class="asset-exp-panel" style="border-top:0.5px solid var(--border)">
+          <div class="asset-exp-hdr"><span class="lbl">יומן טיפולים / טסטים</span></div>
+          ${renderCarServiceLogHtml(serviceLog.filter(l => l.car_id === car.id))}
+        </div>
+        ${renderAssetExpensesPanel('car', car.id, assetExpenses)}
         <div class="block-actions">
           <button class="btn sm danger" onclick="del('cars','${car.id}',true)" style="margin-right:auto">🗑 מחק</button>
         </div>
@@ -1540,22 +1935,9 @@ const SHOP_CATS = [
   { id: 'other', label: 'אחר' }
 ];
 
-const SHOP_WEEKLY = [
-  { name: 'חלב', qty: '2', category: 'dairy' },
-  { name: 'ביצים', qty: '1', category: 'dairy' },
-  { name: 'גבינה צהובה', qty: '1', category: 'dairy' },
-  { name: 'יוגורט', qty: '6', category: 'dairy' },
-  { name: 'לחם', qty: '1', category: 'grocery' },
-  { name: 'עגבניות', qty: '1', category: 'produce' },
-  { name: 'מלפפון', qty: '2', category: 'produce' },
-  { name: 'בננות', qty: '1', category: 'produce' },
-  { name: 'עוף', qty: '1', category: 'meat' },
-  { name: 'אורז', qty: '1', category: 'grocery' },
-  { name: 'שמן', qty: '1', category: 'grocery' },
-  { name: 'נייר טואלט', qty: '1', category: 'cleaning' }
-];
-
-const SHOP_QUICK_CHIPS = ['חלב', 'לחם', 'ביצים', 'מים', 'גבינה', 'עגבניות'];
+let shopRealtimeChannel = null;
+let shopRefreshTimer = null;
+let shopStaplesAvailable = true;
 
 function getShopHideDone() {
   return localStorage.getItem('bayit_shop_hide_done') !== '0';
@@ -1592,10 +1974,79 @@ async function insertShopRow(row) {
   return error;
 }
 
+async function insertStapleRow(row) {
+  const { error } = await sb.from('shopping_staples').insert(row);
+  if (error && /does not exist|relation/i.test(error.message || '')) shopStaplesAvailable = false;
+  return error;
+}
+
+async function fetchShoppingStaples() {
+  if (!sb) return [];
+  const { data, error } = await sb.from('shopping_staples').select('*').order('category').order('name');
+  if (error) {
+    if (/does not exist|relation/i.test(error.message || '')) {
+      shopStaplesAvailable = false;
+      return [];
+    }
+    console.error('fetchShoppingStaples', error);
+    return [];
+  }
+  shopStaplesAvailable = true;
+  return data || [];
+}
+
+function initShopQuickBar() {
+  const sel = document.getElementById('shop-quick-cat');
+  if (sel && !sel.dataset.ready) {
+    sel.innerHTML = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
+    sel.dataset.ready = '1';
+  }
+  bindShopQuickInput();
+}
+
+function scheduleShopRefresh() {
+  clearTimeout(shopRefreshTimer);
+  shopRefreshTimer = setTimeout(() => refreshShoppingUI(), 120);
+}
+
+function ensureShopRealtime() {
+  if (!sb || shopRealtimeChannel) return;
+  shopRealtimeChannel = sb.channel('shop-sync')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping' }, scheduleShopRefresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_staples' }, scheduleShopRefresh)
+    .subscribe((status) => {
+      const hint = document.getElementById('shop-live-hint');
+      if (hint) hint.hidden = status !== 'SUBSCRIBED';
+    });
+}
+
+function teardownShopRealtime() {
+  if (shopRealtimeChannel && sb) {
+    sb.removeChannel(shopRealtimeChannel);
+    shopRealtimeChannel = null;
+  }
+  const hint = document.getElementById('shop-live-hint');
+  if (hint) hint.hidden = true;
+}
+
+async function refreshShoppingUI() {
+  if (!document.getElementById('page-daily')?.classList.contains('active')) return;
+  const [shopping, staples] = await Promise.all([fetch_('shopping'), fetchShoppingStaples()]);
+  renderShopSection(shopping, staples);
+}
+
 function buildShopFormHtml() {
   const opts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
   return `<div class="fg"><label>פריט</label><input id="f1" placeholder="חלב, לחם..."></div>
     <div class="fg"><label>כמות</label><input id="f2" placeholder="1"></div>
+    <div class="fg"><label>קטגוריה</label><select id="f3">${opts}</select></div>
+    <label class="shop-save-staple-lbl"><input type="checkbox" id="f_staple"> שמור גם ברשימה הקבועה</label>`;
+}
+
+function buildStapleFormHtml() {
+  const opts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
+  return `<div class="fg"><label>פריט קבוע</label><input id="f1" placeholder="חלב, לחם..."></div>
+    <div class="fg"><label>כמות רגילה</label><input id="f2" placeholder="1"></div>
     <div class="fg"><label>קטגוריה</label><select id="f3">${opts}</select></div>`;
 }
 
@@ -1606,7 +2057,7 @@ function renderShopListHtml(items, hideDone) {
   const visible = hideDone ? active : sorted;
 
   if (!items.length) {
-    return '<div class="empty">ריקה — הוסיפו פריט למטה או «רשימת שבוע»</div>';
+    return '<div class="empty">ריקה — «הכן לקנייה» או הוסיפו פריט למעלה</div>';
   }
 
   let html = '';
@@ -1617,21 +2068,26 @@ function renderShopListHtml(items, hideDone) {
       html += `<div class="shop-cat-hdr">${escHtml(shopCatLabel(cat))}</div>`;
       lastCat = cat;
     }
-    html += `<div class="check-row shop-row">
+    const cartWho = s.done && s.added_by ? `<span class="shop-in-cart">בעגלה · ${escHtml(s.added_by)}</span>` : '';
+    html += `<div class="check-row shop-row" data-shop-id="${s.id}">
       <input type="checkbox" ${s.done ? 'checked' : ''} onchange="toggleDone('shopping','${s.id}',this.checked)">
       <span class="check-text ${s.done ? 'done' : ''}">${escHtml(s.name)}</span>
       <span class="badge gy">${escHtml(s.qty || '1')}</span>
+      ${cartWho}
+      <button class="btn icon-only" type="button" onclick="promoteShopToStaple('${s.id}')" title="הוסף לקבועה">📌</button>
       <button class="btn icon-only" type="button" onclick="del('shopping','${s.id}',true)">🗑</button>
     </div>`;
   });
 
   if (hideDone && bought.length) {
-    html += `<details class="shop-done-collapsed"><summary>נקנו (${bought.length}) — הצג</summary>`;
+    html += `<details class="shop-done-collapsed" open><summary>בעגלה (${bought.length})</summary>`;
     bought.forEach(s => {
-      html += `<div class="check-row shop-row">
+      const cartWho = s.added_by ? `<span class="shop-in-cart">${escHtml(s.added_by)}</span>` : '';
+      html += `<div class="check-row shop-row" data-shop-id="${s.id}">
         <input type="checkbox" checked onchange="toggleDone('shopping','${s.id}',false)">
         <span class="check-text done">${escHtml(s.name)}</span>
         <span class="badge gy">${escHtml(s.qty || '1')}</span>
+        ${cartWho}
         <button class="btn icon-only" type="button" onclick="del('shopping','${s.id}',true)">🗑</button>
       </div>`;
     });
@@ -1640,124 +2096,137 @@ function renderShopListHtml(items, hideDone) {
   return html;
 }
 
-async function renderShopSection(shopping) {
+function renderStaplesListHtml(staples) {
+  if (!shopStaplesAvailable) {
+    return '<p class="hint">הרץ shopping-staples-migration.sql ב-Supabase</p>';
+  }
+  if (!staples.length) {
+    return '<div class="empty">ריקה — הוסיפו פריטים קבועים</div>';
+  }
+  const sorted = sortShoppingItems(staples.map(s => ({ ...s, done: false })));
+  let html = '';
+  let lastCat = null;
+  sorted.forEach(s => {
+    const cat = s.category || 'other';
+    if (cat !== lastCat) {
+      html += `<div class="shop-cat-hdr">${escHtml(shopCatLabel(cat))}</div>`;
+      lastCat = cat;
+    }
+    html += `<div class="shop-staple-row">
+      <span style="flex:1">${escHtml(s.name)} <span class="badge gy">${escHtml(s.qty || '1')}</span></span>
+      <button class="btn icon-only" type="button" onclick="del('shopping_staples','${s.id}',true)">🗑</button>
+    </div>`;
+  });
+  return html;
+}
+
+function renderShopSection(shopping, staples) {
+  initShopQuickBar();
   const hideDone = getShopHideDone();
   const done = shopping.filter(x => x.done).length;
+  const todo = shopping.filter(x => !x.done).length;
   const total = shopping.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
 
   el('shop-progress', total ? `
     <div class="shop-progress">
       <div class="shop-progress-bar"><div class="shop-progress-fill" style="width:${pct}%"></div></div>
-      <div class="shop-progress-meta"><span>${done} מתוך ${total} בסל</span><span>${pct}%</span></div>
-    </div>` : '');
+      <div class="shop-progress-meta"><span>${done} בעגלה · ${todo} נשאר</span><span>${pct}%</span></div>
+    </div>` : '<p class="hint" style="margin-bottom:.5rem">לחצו «הכן לקנייה» או הוסיפו פריט למעלה</p>');
 
+  const prepBtn = shopStaplesAvailable
+    ? `<button type="button" class="btn sm primary" onclick="prepareShopTrip()">הכן לקנייה</button>`
+    : '';
   el('shop-toolbar', `
     <div class="shop-toolbar">
-      <button type="button" class="btn sm primary" onclick="applyWeeklyShopTemplates()">📋 רשימת שבוע</button>
-      <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג נקנו' : 'הסתר נקנו'}</button>
-      ${done ? `<button type="button" class="btn sm danger" onclick="clearDoneShopping()">נקה נקנו (${done})</button>` : ''}
-      <button type="button" class="btn sm" onclick="closeShopTrip()">סגור קנייה → תזרים</button>
+      ${prepBtn}
+      <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג בעגלה' : 'הסתר בעגלה'}</button>
+      ${done ? `<button type="button" class="btn sm" onclick="finishShopTrip()">סיימנו קנייה</button>` : ''}
     </div>`);
-
-  const chips = SHOP_QUICK_CHIPS.map(n =>
-    `<button type="button" class="btn sm cf-tpl" onclick="addShopQuickChip('${escAttr(n)}')">${n}</button>`
-  ).join('');
-  el('shop-tpl', `<div class="cf-tpl-wrap">${chips}</div>`);
 
   el('shop-list', renderShopListHtml(shopping, hideDone));
-  el('shop-done-wrap', '');
 
-  const catOpts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
-  el('shop-quick', `
-    <div class="shop-quick">
-      <select id="shop-quick-cat" aria-label="קטגוריה">${catOpts}</select>
-      <input id="shop-quick-name" type="text" placeholder="הקלד פריט ולחץ Enter" autocomplete="off">
-      <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
-    </div>`);
-  bindShopQuickInput();
+  const sum = document.getElementById('shop-staples-summary');
+  if (sum) sum.textContent = `הרשימה הקבועה (${staples.length})`;
+  el('shop-staples-list', renderStaplesListHtml(staples));
 }
 
 window.quickAddShop = async function () {
   const name = gv('shop-quick-name');
   if (!name) return;
   const category = document.getElementById('shop-quick-cat')?.value || 'other';
-  const err = await insertShopRow({ name, qty: '1', category, added_by: await getShopAddedBy() });
+  const saveStaple = document.getElementById('shop-save-staple')?.checked;
+  const err = await insertShopRow({ name, qty: '1', category, done: false, added_by: '' });
   if (err) { toast('שגיאה בהוספה'); console.error(err); return; }
-  toast('✓ נוסף');
-  await renderDaily();
-};
-
-window.addShopQuickChip = async function (name) {
-  const tpl = SHOP_WEEKLY.find(t => t.name === name);
-  const err = await insertShopRow({
-    name,
-    qty: tpl?.qty || '1',
-    category: tpl?.category || 'other',
-    added_by: await getShopAddedBy()
-  });
-  if (err) { toast('שגיאה'); return; }
-  toast('✓ ' + name);
-  await renderDaily();
-};
-
-window.applyWeeklyShopTemplates = async function () {
-  if (!sb) { toast('לא מחובר'); return; }
-  const existing = await fetch_('shopping');
-  const names = new Set(existing.filter(i => !i.done).map(i => (i.name || '').trim().toLowerCase()));
-  const addedBy = await getShopAddedBy();
-  let added = 0;
-  for (const t of SHOP_WEEKLY) {
-    if (names.has(t.name.trim().toLowerCase())) continue;
-    const err = await insertShopRow({ name: t.name, qty: t.qty, category: t.category, added_by: addedBy });
-    if (!err) { names.add(t.name.trim().toLowerCase()); added++; }
+  if (saveStaple && shopStaplesAvailable) {
+    const se = await insertStapleRow({ name, qty: '1', category });
+    if (se && !/duplicate|unique/i.test(se.message || '')) console.warn('staple', se);
   }
-  toast(added ? `✓ נוספו ${added} פריטים` : 'כבר ברשימה');
-  await renderDaily();
+  const inp = document.getElementById('shop-quick-name');
+  if (inp) { inp.value = ''; inp.focus(); }
+  toast('✓ נוסף');
+  await refreshShoppingUI();
 };
 
-window.toggleShopHideDone = async function () {
+window.prepareShopTrip = async function () {
+  if (!sb) { toast('לא מחובר'); return; }
+  if (!shopStaplesAvailable) {
+    toast('הרץ shopping-staples-migration.sql');
+    return;
+  }
+  const [staples, shopping] = await Promise.all([fetchShoppingStaples(), fetch_('shopping')]);
+  if (!staples.length) { toast('הוסיפו פריטים לרשימה הקבועה'); return; }
+  const byName = new Map(shopping.map(i => [(i.name || '').trim().toLowerCase(), i]));
+  let added = 0;
+  let revived = 0;
+  for (const t of staples) {
+    const key = (t.name || '').trim().toLowerCase();
+    const existing = byName.get(key);
+    if (!existing) {
+      const err = await insertShopRow({ name: t.name, qty: t.qty || '1', category: t.category || 'other', done: false, added_by: '' });
+      if (!err) { added++; byName.set(key, { name: t.name }); }
+    } else if (existing.done) {
+      await sb.from('shopping').update({ done: false, added_by: '' }).eq('id', existing.id);
+      revived++;
+    }
+  }
+  toast(added || revived ? `✓ ${added} חדשים, ${revived} הוחזרו לרשימה` : 'הכל כבר מוכן');
+  await refreshShoppingUI();
+};
+
+window.promoteShopToStaple = async function (id) {
+  if (!shopStaplesAvailable) { toast('הרץ shopping-staples-migration.sql'); return; }
+  const items = await fetch_('shopping');
+  const item = items.find(i => i.id === id);
+  if (!item) return;
+  const err = await insertStapleRow({ name: item.name, qty: item.qty || '1', category: item.category || 'other' });
+  if (err) {
+    toast(/duplicate|unique/i.test(err.message || '') ? 'כבר ברשימה הקבועה' : 'שגיאה');
+    return;
+  }
+  toast('✓ נשמר בקבועה');
+  await refreshShoppingUI();
+};
+
+window.toggleShopHideDone = function () {
   setShopHideDone(!getShopHideDone());
-  await renderDaily();
+  refreshShoppingUI();
 };
 
 function setShopHideDone(v) {
   localStorage.setItem('bayit_shop_hide_done', v ? '1' : '0');
 }
 
-window.clearDoneShopping = async function () {
+window.finishShopTrip = async function () {
   if (!sb) return;
   const items = await fetch_('shopping');
   const doneIds = items.filter(i => i.done).map(i => i.id);
-  if (!doneIds.length) { toast('אין פריטים נקנו'); return; }
-  if (!confirm(`למחוק ${doneIds.length} פריטים שסומנו כנקנו?`)) return;
+  if (!doneIds.length) { toast('אין פריטים בעגלה'); return; }
+  if (!confirm(`לסיים קנייה ולהסיר ${doneIds.length} פריטים מהרשימה?\n(הרשימה הקבועה נשארת)`)) return;
   const { error } = await sb.from('shopping').delete().in('id', doneIds);
   if (error) { toast('שגיאה'); return; }
-  toast('✓ נוקה');
-  await renderDaily();
-};
-
-window.closeShopTrip = async function () {
-  if (!sb) { toast('לא מחובר'); return; }
-  const amount = prompt('סכום הקנייה הכולל (₪)? השאר ריק לביטול');
-  if (amount === null || amount.trim() === '') return;
-  const n = parseFloat(amount.replace(/,/g, ''));
-  if (!Number.isFinite(n) || n <= 0) { toast('סכום לא תקין'); return; }
-  const { error } = await sb.from('cashflow').insert({
-    name: 'סופר / מכולת',
-    amount: n,
-    type: 'expense',
-    is_fixed: false
-  });
-  if (error) { toast('שגיאה בתזרים'); console.error(error); return; }
-  const items = await fetch_('shopping');
-  const doneIds = items.filter(i => i.done).map(i => i.id);
-  if (doneIds.length && confirm(`נוסף לתזרים. למחוק ${doneIds.length} פריטים שנקנו מהרשימה?`)) {
-    await sb.from('shopping').delete().in('id', doneIds);
-  }
-  toast('✓ נרשם בתזרים');
-  await renderDaily();
-  await renderOverview();
+  toast('✓ סיימתם — לקנייה הבאה: «הכן לקנייה»');
+  await refreshShoppingUI();
 };
 
 function bindShopQuickInput() {
@@ -1771,11 +2240,12 @@ function bindShopQuickInput() {
 
 // ── Daily ─────────────────────────────────────────────────
 async function renderDaily() {
-  const [shopping, activities, tasks, reminders] = await Promise.all([
-    fetch_('shopping'), fetch_('activities'), fetch_('tasks'), fetch_('reminders')
+  ensureShopRealtime();
+  const [shopping, staples, activities, tasks, reminders] = await Promise.all([
+    fetch_('shopping'), fetchShoppingStaples(), fetch_('activities'), fetch_('tasks'), fetch_('reminders')
   ]);
 
-  await renderShopSection(shopping);
+  renderShopSection(shopping, staples);
 
   el('act-list', activities.map(a => `
     <div class="row">
@@ -1858,6 +2328,12 @@ function toggleBlock(key, elId) {
 
 async function toggleDone(table, id, val) {
   if (!sb) return;
+  if (table === 'shopping') {
+    const who = val ? await getShopAddedBy() : '';
+    await sb.from('shopping').update({ done: val, added_by: who }).eq('id', id);
+    await refreshShoppingUI();
+    return;
+  }
   await sb.from(table).update({ done: val }).eq('id', id);
   const page = document.querySelector('.page.active')?.id?.replace('page-', '');
   if (page) await renderPage(page);
@@ -1874,9 +2350,12 @@ const DELETE_CONFIRM = {
   savings_loans: 'למחוק הלוואה על נכס זה?',
   properties: 'למחוק נכס זה?',
   property_expenses: 'למחוק הוצאה זו?',
+  asset_expenses: 'למחוק הוצאה על הנכס?',
   cars: 'למחוק רכב זה?',
-  car_events: 'למחוק אירוע זה?',
+  car_events: 'למחוק תזכורת רכב זו?',
+  car_service_log: 'למחוק רישום טיפול/טסט?',
   shopping: 'למחוק פריט מהרשימה?',
+  shopping_staples: 'להסיר מהרשימה הקבועה?',
   activities: 'למחוק חוג זה?',
   tasks: 'למחוק משימה זו?',
   reminders: 'למחוק תזכורת זו?',
@@ -2007,10 +2486,10 @@ async function refreshStocks() {
 
 // ── WhatsApp Share ────────────────────────────────────────
 async function shareWA() {
-  const [loans, cf, props, savLoans] = await Promise.all([
-    fetch_('loans'), fetch_('cashflow'), fetch_('properties'), fetch_('savings_loans')
-  ]);
-  const { income: inc, expense: exp, net } = calcCashflowTotals(cf, props);
+  const b = await fetchCashflowBundle();
+  const { income: inc, expense: exp, net } = calcCashflowTotals(
+    b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy
+  );
   let msg = `*משפחת אפללו — סיכום*\n${new Date().toLocaleDateString('he-IL')}\n\n`;
   msg += `💵 תזרים נטו: ₪${fmt(net)}\n`;
   msg += `📈 הכנסות: ₪${fmt(inc)}\n`;
@@ -2105,11 +2584,13 @@ const forms = {
   car: `<div class="fg"><label>יצרן</label><input id="f1" placeholder="טויוטה..."></div>
     <div class="fg"><label>דגם</label><input id="f2" placeholder="קורולה..."></div>
     <div class="fg"><label>שנה</label><input id="f3" type="number" placeholder="2020"></div>
-    <div class="fg"><label>רישוי</label><input id="f4" placeholder="12-345-67"></div>`,
-  cev: `<div class="fg"><label>סוג</label><select id="f1"><option>טסט</option><option>טיפול שמן</option><option>ביטוח</option><option>טיפול תקופתי</option><option>תיקון</option><option>אחר</option></select></div>
-    <div class="fg"><label>תאריך</label><input id="f2" type="date"></div>
+    <div class="fg"><label>רישוי</label><input id="f4" placeholder="12-345-67"></div>
+    <div class="fg"><label>ק״מ נוכחי (אופציונלי)</label><input id="f_km_car" type="number" min="0" placeholder="0"></div>`,
+  cev: `<p class="hint" style="margin-bottom:.75rem">תזכורת לטיפול עתידי — בסגירה תתבקש תאריך ביצוע וק״מ (בטסט/טיפול)</p>
+    <div class="fg"><label>סוג</label><select id="f1"><option>טסט</option><option>טיפול תקופתי</option><option>טיפול שמן</option><option>ביטוח</option><option>תיקון</option><option>אחר</option></select></div>
+    <div class="fg"><label>תאריך יעד</label><input id="f2" type="date"></div>
     <div class="fg"><label>הערה</label><input id="f3" placeholder="פרטים..."></div>
-    <div class="fg"><label>עלות (₪)</label><input id="f4" type="number" placeholder="0"></div>`,
+    <div class="fg"><label>עלות משוערת (₪)</label><input id="f4" type="number" placeholder="0"></div>`,
   act: `<div class="fg"><label>חוג</label><input id="f1" placeholder="שחייה..."></div>
     <div class="fg"><label>ילד</label><input id="f2" placeholder="שם"></div>
     <div class="fg"><label>יום ושעה</label><input id="f3" placeholder="שלישי 17:00"></div>
@@ -2124,7 +2605,77 @@ const forms = {
     <div class="fg"><label>תדירות</label><select id="f3"><option value="monthly">חודשי</option><option value="quarterly">רבעוני</option><option value="weekly">שבועי</option><option value="yearly">שנתי</option></select></div>
     <div class="fg"><label>תאריך ראשון</label><input id="f4" type="date"></div>`
 };
-const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', sacc: 'חשבון חדש', sstk: 'מניה/ETF', sloan: 'הלוואה על נכס', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', car: 'רכב חדש', cev: 'אירוע רכב', shop: 'קנייה', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', car: 'רכב חדש', cev: 'תזכורת רכב (לטפל)', cev_done: 'תיעוד ביצוע', shop: 'פריט לקנייה', staple: 'פריט ברשימה הקבועה', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+
+const MODAL_FORM_BASE = {
+  prop_edit: 'prop',
+  scat_edit: 'scat',
+  sacc_edit: 'sacc',
+  sstk_edit: 'sstk',
+  sloan_edit: 'sloan'
+};
+
+function setModalField(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const v = value == null ? '' : value;
+  if (el.tagName === 'SELECT') el.value = String(v);
+  else el.value = v;
+}
+
+async function loadModalForEdit(type, id) {
+  if (!sb || !id) return;
+  const fail = () => toast('לא נמצא — נסה לרענן');
+  if (type === 'prop_edit') {
+    const { data: p, error } = await sb.from('properties').select('*').eq('id', id).single();
+    if (error || !p) { fail(); return; }
+    setModalField('f1', p.name);
+    setModalField('f2', p.address);
+    setModalField('f_icon', p.icon || '🏠');
+    setModalField('f_rented', p.is_rented ? '1' : '0');
+    setModalField('f3', p.value);
+    setModalField('f4', p.mortgage);
+    setModalField('f5', p.monthly_mortgage);
+    setModalField('f6', p.monthly_expenses);
+    setModalField('f7', p.rental_income);
+    setModalField('f8', p.last_valuation_date);
+    return;
+  }
+  if (type === 'scat_edit') {
+    const { data: c, error } = await sb.from('savings_cats').select('*').eq('id', id).single();
+    if (error || !c) { fail(); return; }
+    setModalField('f1', c.name);
+    setModalField('f2', c.icon || '💰');
+    setModalField('f3', c.type || 'bank');
+    return;
+  }
+  if (type === 'sacc_edit') {
+    const { data: a, error } = await sb.from('savings_accounts').select('*').eq('id', id).single();
+    if (error || !a) { fail(); return; }
+    setModalField('f1', a.name);
+    setModalField('f2', a.amount);
+    setModalField('f3', a.goal);
+    setModalField('f4', a.note);
+    return;
+  }
+  if (type === 'sstk_edit') {
+    const { data: s, error } = await sb.from('savings_stocks').select('*').eq('id', id).single();
+    if (error || !s) { fail(); return; }
+    setModalField('f1', s.symbol);
+    setModalField('f2', s.name);
+    setModalField('f3', s.units);
+    return;
+  }
+  if (type === 'sloan_edit') {
+    const { data: l, error } = await sb.from('savings_loans').select('*').eq('id', id).single();
+    if (error || !l) { fail(); return; }
+    setModalField('f1', l.name);
+    setModalField('f2', l.balance);
+    setModalField('f3', l.monthly);
+    setModalField('f4', l.rate);
+    setModalField('f5', l.note);
+  }
+}
 const CF_MODAL_TITLES = {
   'income-fixed': 'הכנסה קבועה',
   'income-variable': 'הכנסה משתנה',
@@ -2145,15 +2696,25 @@ function applyCfModalDefaults(target) {
   f4.value = isVar ? '0' : '1';
 }
 
-function om(type, target) {
+async function om(type, target) {
   modalType = type; modalTarget = target || null;
   let title = titles[type] || type;
   if (type === 'cf' && CF_MODAL_TITLES[target]) title = CF_MODAL_TITLES[target];
+  if (type === 'aexp') {
+    const parts = String(target || '').split(':');
+    title = `הוצאה — ${ASSET_TYPE_LABELS[parts[0]] || 'נכס'}`;
+  }
+  const formKey = MODAL_FORM_BASE[type] || type;
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = type === 'cfclose'
     ? buildCfCloseForm()
-    : (type === 'cf' ? buildCfFormHtml() : type === 'shop' ? buildShopFormHtml() : (forms[type] || ''));
+    : (type === 'cf' ? buildCfFormHtml()
+      : type === 'shop' ? buildShopFormHtml()
+      : type === 'staple' ? buildStapleFormHtml()
+      : type === 'aexp' ? buildAexpFormHtml(String(target || '').split(':')[2] || 'once')
+      : (forms[formKey] || ''));
   document.getElementById('modal').classList.add('open');
+  if (MODAL_FORM_BASE[type] && target) await loadModalForEdit(type, target);
   setTimeout(() => {
     const f1 = document.getElementById('f1');
     if (f1) f1.focus();
@@ -2169,6 +2730,7 @@ function om(type, target) {
     }
   }, 80);
 }
+window.om = om;
 function closeModal() { document.getElementById('modal').classList.remove('open'); }
 
 function setModalSaving(on) {
@@ -2184,7 +2746,14 @@ async function saveModal() {
   setModalSaving(true);
   try {
     const cols = { bank: '#E6F1FB', stocks: '#E1F5EE', pension: '#FAEEDA', other: '#F1EFE8' };
-    if (t === 'loan') await sb.from('loans').insert({ name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, note: gv('f4') });
+    if (t === 'loan') {
+      const monthly = +gv('f3') || 0;
+      const { data: row, error } = await sb.from('loans').insert({
+        name: gv('f1'), balance: +gv('f2') || 0, monthly, note: gv('f4')
+      }).select('id').single();
+      if (error) throw error;
+      if (monthly > 0) await upsertMonthlyAssetExpense('loan', row.id, gv('f1') || 'החזר חודשי', monthly);
+    }
     else if (t === 'cc') await sb.from('credit_cards').insert({ name: gv('f1'), credit_limit: +gv('f2') || 0, used: +gv('f3') || 0, cycle: gv('f4') });
     else if (t === 'cf') {
       const tgt = String(modalTarget || '');
@@ -2212,52 +2781,186 @@ async function saveModal() {
       await closeCashflowMonth(year, month);
       return;
     }
-    else if (t === 'scat') await sb.from('savings_cats').insert({ name: gv('f1'), icon: gv('f2') || '💰', color: cols[gv('f3')] || '#F1EFE8', type: gv('f3'), display_order: 99 });
-    else if (t === 'sacc') await sb.from('savings_accounts').insert({ cat_id: tgt, name: gv('f1'), amount: +gv('f2') || 0, goal: +gv('f3') || 0, note: gv('f4') });
-    else if (t === 'sstk') {
+    else if (t === 'scat' || t === 'scat_edit') {
+      const catRow = { name: gv('f1'), icon: gv('f2') || '💰', color: cols[gv('f3')] || '#F1EFE8', type: gv('f3') };
+      if (t === 'scat_edit') await sb.from('savings_cats').update(catRow).eq('id', tgt);
+      else await sb.from('savings_cats').insert({ ...catRow, display_order: 99 });
+    }
+    else if (t === 'sacc' || t === 'sacc_edit') {
+      const accRow = { name: gv('f1'), amount: +gv('f2') || 0, goal: +gv('f3') || 0, note: gv('f4') };
+      if (t === 'sacc_edit') await sb.from('savings_accounts').update(accRow).eq('id', tgt);
+      else await sb.from('savings_accounts').insert({ ...accRow, cat_id: tgt });
+    }
+    else if (t === 'sstk' || t === 'sstk_edit') {
       if (!sb) { toast('לא מחובר — התחבר שוב'); return; }
-      if (!tgt) { toast('קטגוריה חסרה — סגור ונסה שוב'); return; }
       const symbol = normalizeStockSymbol(gv('f1'));
       const units = parseFloat(gv('f3'));
       if (!symbol) { toast('הכנס סימול מניה'); return; }
       if (!Number.isFinite(units) || units <= 0) { toast('הכנס כמות יחידות (מעל 0)'); return; }
-      const { data: row, error } = await sb.from('savings_stocks').insert({
-        cat_id: tgt, symbol, name: gv('f2') || symbol, units
-      }).select('id').single();
-      if (error) {
-        toast(stockSaveError(error));
-        console.error('sstk insert', error);
-        return;
+      const stockRow = { symbol, name: gv('f2') || symbol, units };
+      let rowId = tgt;
+      let catId = tgt;
+      if (t === 'sstk_edit') {
+        const { data: row, error } = await sb.from('savings_stocks').update(stockRow).eq('id', tgt).select('id, cat_id').single();
+        if (error) {
+          toast(stockSaveError(error));
+          console.error('sstk update', error);
+          return;
+        }
+        rowId = row?.id || tgt;
+        catId = row?.cat_id;
+      } else {
+        if (!tgt) { toast('קטגוריה חסרה — סגור ונסה שוב'); return; }
+        const { data: row, error } = await sb.from('savings_stocks').insert({ ...stockRow, cat_id: tgt }).select('id, cat_id').single();
+        if (error) {
+          toast(stockSaveError(error));
+          console.error('sstk insert', error);
+          return;
+        }
+        rowId = row?.id;
+        catId = row?.cat_id || tgt;
       }
-      openBlocks['cat_' + tgt] = true;
+      if (catId) openBlocks['cat_' + catId] = true;
       closeModal();
       toast('✓ מניה נשמרה');
       const page = document.querySelector('.page.active')?.id?.replace('page-', '');
       if (page) renderPage(page);
       renderOverview();
-      void applyStockPrice(symbol, row?.id).then(ok => {
+      void applyStockPrice(symbol, rowId).then(ok => {
         if (!ok) toast('מחיר יתעדכן בלחיצה על ⟳ מניות');
         else if (page === 'savings') renderSavings();
       });
       return;
     }
-    else if (t === 'sloan') await sb.from('savings_loans').insert({ cat_id: tgt, name: gv('f1'), balance: +gv('f2') || 0, monthly: +gv('f3') || 0, rate: +gv('f4') || 0, note: gv('f5') });
+    else if (t === 'sloan' || t === 'sloan_edit') {
+      const monthly = +gv('f3') || 0;
+      const loanRow = { name: gv('f1'), balance: +gv('f2') || 0, monthly, rate: +gv('f4') || 0, note: gv('f5') };
+      if (t === 'sloan_edit') {
+        const { error } = await sb.from('savings_loans').update(loanRow).eq('id', tgt);
+        if (error) throw error;
+        await upsertMonthlyAssetExpense('savings_loan', tgt, gv('f1') || 'החזר מינוף', monthly);
+      } else {
+        const { data: row, error } = await sb.from('savings_loans').insert({ ...loanRow, cat_id: tgt }).select('id').single();
+        if (error) throw error;
+        if (monthly > 0) await upsertMonthlyAssetExpense('savings_loan', row.id, gv('f1') || 'החזר מינוף', monthly);
+      }
+    }
     else if (t === 'prop' || t === 'prop_edit') {
       const data = { name: gv('f1'), address: gv('f2'), icon: gv('f_icon') || '🏠', is_rented: gv('f_rented') === '1', value: +gv('f3') || 0, mortgage: +gv('f4') || 0, monthly_mortgage: +gv('f5') || 0, monthly_expenses: +gv('f6') || 0, rental_income: +gv('f7') || 0, last_valuation_date: gv('f8') };
-      if (t === 'prop_edit') await sb.from('properties').update(data).eq('id', tgt);
-      else await sb.from('properties').insert(data);
+      if (t === 'prop_edit') {
+        await sb.from('properties').update(data).eq('id', tgt);
+        await upsertMonthlyAssetExpense('property', tgt, 'משכנתא חודשית', data.monthly_mortgage);
+        await upsertMonthlyAssetExpense('property', tgt, 'הוצאות נכס חודשיות', data.monthly_expenses);
+      } else {
+        const { data: row } = await sb.from('properties').insert(data).select('id').single();
+        if (row?.id) {
+          await upsertMonthlyAssetExpense('property', row.id, 'משכנתא חודשית', data.monthly_mortgage);
+          await upsertMonthlyAssetExpense('property', row.id, 'הוצאות נכס חודשיות', data.monthly_expenses);
+        }
+      }
     }
-    else if (t === 'pexp') await sb.from('property_expenses').insert({ property_id: tgt, name: gv('f1'), amount: +gv('f2') || 0, expense_date: gv('f3') });
-    else if (t === 'car') await sb.from('cars').insert({ make: gv('f1'), model: gv('f2'), year: +gv('f3') || 2020, plate: gv('f4') });
-    else if (t === 'cev') await sb.from('car_events').insert({ car_id: tgt, type: gv('f1'), event_date: gv('f2'), note: gv('f3'), cost: +gv('f4') || 0 });
-    else if (t === 'shop') {
-      const err = await insertShopRow({
+    else if (t === 'aexp' || t === 'pexp') {
+      const parts = t === 'pexp' ? ['property', tgt, 'once'] : (tgt || '').split(':');
+      const kind = gv('f3') || parts[2] || 'once';
+      const { error } = await sb.from('asset_expenses').insert({
+        asset_type: parts[0],
+        asset_id: parts[1],
         name: gv('f1'),
-        qty: gv('f2') || '1',
-        category: gv('f3') || 'other',
-        added_by: await getShopAddedBy()
+        amount: +gv('f2') || 0,
+        kind,
+        expense_date: kind === 'once' ? (gv('f4') || '') : '',
+        note: gv('f5') || ''
       });
+      if (error) {
+        toast(error.message?.includes('asset_expenses') ? 'הרץ asset-expenses-migration.sql' : 'שגיאה');
+        throw error;
+      }
+    }
+    else if (t === 'car') {
+      await sb.from('cars').insert({
+        make: gv('f1'), model: gv('f2'), year: +gv('f3') || 2020,
+        plate: gv('f4'), odometer_km: parseInt(document.getElementById('f_km_car')?.value, 10) || 0
+      });
+    }
+    else if (t === 'cev_done') {
+      const ev = pendingCarEventComplete;
+      if (!ev) { toast('אירוע לא נטען'); return; }
+      const performed = gv('f2');
+      const kmRaw = document.getElementById('f_km')?.value?.trim();
+      const km = kmRaw === '' ? NaN : parseInt(kmRaw, 10);
+      const cost = +gv('f4') || 0;
+      const note = gv('f3') || '';
+      if (!performed) { toast('נא למלא תאריך ביצוע'); return; }
+      if (carServiceRequiresKm(ev.type) && (!Number.isFinite(km) || km < 0)) {
+        toast('נא למלא ק״מ בביצוע הטיפול/טסט');
+        return;
+      }
+      const odometer = Number.isFinite(km) && km >= 0 ? km : 0;
+      const { error: logErr } = await sb.from('car_service_log').insert({
+        car_id: ev.car_id,
+        type: ev.type,
+        performed_date: performed,
+        odometer_km: odometer,
+        cost,
+        note
+      });
+      if (logErr) {
+        toast(logErr.message?.includes('car_service_log') ? 'הרץ car-service-log-migration.sql' : 'שגיאה בשמירה');
+        throw logErr;
+      }
+      if (odometer > 0) {
+        await sb.from('cars').update({ odometer_km: odometer }).eq('id', ev.car_id);
+      }
+      if (cost > 0 && assetExpensesTableOk) {
+        await sb.from('asset_expenses').insert({
+          asset_type: 'car',
+          asset_id: ev.car_id,
+          name: `${ev.type}${note ? ' — ' + note : ''}`,
+          amount: cost,
+          kind: 'once',
+          expense_date: performed,
+          note: `ק״מ ${odometer}`
+        });
+      }
+      await sb.from('car_events').delete().eq('id', ev.id);
+      pendingCarEventComplete = null;
+      closeModal();
+      toast('✓ נשמר ביומן הטיפולים');
+      const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+      if (page) await renderPage(page);
+      await renderOverview();
+      return;
+    }
+    else if (t === 'cev') {
+      const cost = +gv('f4') || 0;
+      await sb.from('car_events').insert({ car_id: tgt, type: gv('f1'), event_date: gv('f2'), note: gv('f3'), cost });
+      if (cost > 0 && assetExpensesTableOk) {
+        await sb.from('asset_expenses').insert({
+          asset_type: 'car',
+          asset_id: tgt,
+          name: `${gv('f1')}${gv('f3') ? ' — ' + gv('f3') : ''}`,
+          amount: cost,
+          kind: 'once',
+          expense_date: gv('f2') || '',
+          note: ''
+        });
+      }
+    }
+    else if (t === 'shop') {
+      const row = { name: gv('f1'), qty: gv('f2') || '1', category: gv('f3') || 'other', done: false, added_by: '' };
+      const err = await insertShopRow(row);
       if (err) throw err;
+      if (document.getElementById('f_staple')?.checked && shopStaplesAvailable) {
+        const se = await insertStapleRow({ name: row.name, qty: row.qty, category: row.category });
+        if (se && !/duplicate|unique/i.test(se.message || '')) console.warn('staple', se);
+      }
+    }
+    else if (t === 'staple') {
+      const err = await insertStapleRow({ name: gv('f1'), qty: gv('f2') || '1', category: gv('f3') || 'other' });
+      if (err) {
+        toast(/duplicate|unique/i.test(err.message || '') ? 'כבר קיים ברשימה הקבועה' : 'שגיאה');
+        throw err;
+      }
     }
     else if (t === 'act') await sb.from('activities').insert({ name: gv('f1'), child: gv('f2'), day: gv('f3'), cost: +gv('f4') || 0 });
     else if (t === 'task') await sb.from('tasks').insert({ text: gv('f1'), who: gv('f2') || 'שניהם' });
@@ -2276,7 +2979,7 @@ async function saveModal() {
       toast('✓ שניכם תראו אותו דבר');
     }
 
-    if (t !== 'sstk' && t !== 'display') toast('✓ נשמר');
+    if (t !== 'sstk' && t !== 'sstk_edit' && t !== 'display') toast('✓ נשמר');
     closeModal();
     const page = document.querySelector('.page.active')?.id?.replace('page-', '');
     if (page) renderPage(page);
@@ -2312,6 +3015,7 @@ function bindUi() {
   bindCfgBtn('btn-save-config', () => saveConfig(false));
   bindCfgBtn('btn-save-config-skip', () => saveConfig(true));
   bindCfgBtn('btn-save-config-go', () => saveConfig(true));
+  initShopQuickBar();
   const logoutBtn = document.getElementById('btn-logout');
   if (logoutBtn && !logoutBtn.dataset.bound) {
     logoutBtn.dataset.bound = '1';

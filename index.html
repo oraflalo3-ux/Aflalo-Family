@@ -55,9 +55,22 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .app { display: flex; flex-direction: column; height: 100dvh; height: 100vh; max-height: 100dvh; overflow: hidden; }
 
 /* Topbar */
-.topbar { background: var(--bg2); border-bottom: 0.5px solid var(--border); padding: 0 .75rem; padding-top: env(safe-area-inset-top); display: flex; align-items: center; justify-content: space-between; min-height: 48px; flex-shrink: 0; z-index: 100; }
-.topbar-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.logo { font-size: 15px; font-weight: 600; white-space: nowrap; } .logo span { color: var(--green); }
+.topbar {
+  background: var(--bg2); border-bottom: 0.5px solid var(--border);
+  padding: 0 max(.75rem, env(safe-area-inset-right)) 0 max(.75rem, env(safe-area-inset-left));
+  padding-top: env(safe-area-inset-top);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 48px; flex-shrink: 0; z-index: 100; min-width: 0;
+}
+.logo { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar-actions {
+  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; justify-content: flex-start; padding: 2px 0;
+}
+.topbar-actions::-webkit-scrollbar { display: none; }
+.topbar-actions .btn.sm { flex-shrink: 0; }
+.logo { font-size: 15px; font-weight: 600; } .logo span { color: var(--green); }
 .alert-count { background: var(--red-mid); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; margin-right: 4px; }
 
 /* Main scroll area */
@@ -86,6 +99,10 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 
 /* Metrics — 2 columns on phone (stable, no jump) */
 .mrow { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: .85rem; min-height: 4.5rem; }
+#fin-summary.mrow { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 400px) {
+  #fin-summary.mrow { grid-template-columns: 1fr; }
+}
 .met { background: var(--bg3); border-radius: var(--radius); padding: .75rem .9rem; }
 .ml { font-size: 11px; color: var(--text2); margin-bottom: 3px; }
 .mv { font-size: 17px; font-weight: 600; word-break: break-word; }
@@ -261,9 +278,26 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .fin-details[open] summary { border-bottom: 0.5px solid var(--border); }
 
 /* Cashflow bar */
-.cfbar { display: flex; gap: 2px; height: 24px; border-radius: var(--radius); overflow: hidden; margin-bottom: .5rem; }
-.cfi { background: var(--green-mid); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 500; }
-.cfe { background: var(--red-mid); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 500; }
+.fin-cf-visual { margin-bottom: .85rem; padding: .9rem 1rem; }
+.cfbar { display: flex; height: 32px; border-radius: 99px; overflow: hidden; margin-bottom: .65rem; }
+.cfi { background: var(--green-mid); display: flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; font-weight: 600; min-width: 4.5rem; flex-shrink: 0; }
+.cfe { background: var(--red-mid); display: flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; font-weight: 600; min-width: 4.5rem; flex-shrink: 0; }
+.cfbar-legend { display: flex; justify-content: flex-start; gap: 1.25rem; font-size: 12px; color: var(--text2); }
+.cfbar-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.cf-legend-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+.cf-legend-dot.inc { background: var(--green-mid); }
+.cf-legend-dot.exp { background: var(--red-mid); }
+.cf-ext-row { background: var(--bg3); }
+.cf-ext-row .cf-t-amt { font-weight: 600; }
+.cf-src-tag { font-size: 10px; color: var(--text3); margin-right: 4px; }
+.cf-edit-hint { font-size: 10px; color: var(--text3); white-space: nowrap; }
+.cf-sep-row td { font-size: 10px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .04em; padding: 10px 8px 6px; background: var(--bg3); border-top: 0.5px solid var(--border); }
+.asset-exp-panel { padding: .65rem 1rem; border-top: 0.5px solid var(--border); }
+.asset-exp-hdr { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: .5rem; }
+.asset-exp-hdr .lbl { font-size: 11px; font-weight: 600; color: var(--text2); }
+.asset-exp-totals { font-size: 11px; color: var(--text3); margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .75rem; }
+.asset-exp-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 0.5px solid var(--border); }
+.asset-exp-row:last-child { border-bottom: none; }
 
 /* Stack bar (leverage) */
 .stack-bar { height: 7px; border-radius: 4px; overflow: hidden; display: flex; margin-top: 5px; }
@@ -321,7 +355,17 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .shop-cat-hdr:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 .shop-row .check-text { flex: 1; min-width: 0; }
 .shop-row .shop-cat-badge { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
-.shop-quick { display: flex; gap: 6px; align-items: stretch; margin-top: .75rem; padding-top: .75rem; border-top: 0.5px solid var(--border); }
+.shop-quick-wrap { margin-bottom: .75rem; }
+.shop-quick { display: flex; gap: 6px; align-items: stretch; }
+.shop-save-staple-lbl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); margin-top: 6px; cursor: pointer; }
+.shop-save-staple-lbl input { accent-color: var(--green); }
+.shop-live-hint { font-size: 10px; color: var(--green); font-weight: 500; }
+.shop-in-cart { font-size: 10px; color: var(--text3); flex-shrink: 0; }
+.shop-staples-drawer { margin-top: .85rem; border-top: 0.5px solid var(--border); padding-top: .5rem; }
+.shop-staples-drawer summary { font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 0; }
+.shop-staples-hint { margin: 4px 0 .65rem; font-size: 11px; }
+.shop-staple-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
+.shop-staple-row:last-child { border-bottom: none; }
 .shop-quick select { flex: 0 0 7.5rem; font-size: 12px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 8px; background: var(--bg2); color: var(--text); font-family: var(--font); }
 .shop-quick input { flex: 1; min-width: 0; font-size: 14px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 10px 12px; background: var(--bg2); color: var(--text); font-family: var(--font); }
 .shop-done-collapsed { margin-top: .5rem; }
@@ -401,11 +445,15 @@ html.app-config #main-app { display: none !important; }
 html.app-main #main-app { display: flex !important; flex-direction: column; height: 100dvh; height: 100vh; overflow: hidden; }
 html.app-main #login-screen,
 html.app-main #config-screen { display: none !important; }
-.topbar-meta { font-size: 10px; color: var(--text3); max-width: 4.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 380px) {
-  .topbar-meta, #user-label { display: none; }
-  .btn-icon-text .btn-txt { display: none; }
-  .btn-icon-text { min-width: 40px; padding: 8px; }
+.topbar-meta { font-size: 10px; color: var(--text3); max-width: 4.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.btn-icon-text .btn-ico { line-height: 1; }
+@media (max-width: 520px) {
+  .topbar-meta { display: none !important; }
+  .topbar-actions .btn-icon-text .btn-txt,
+  .topbar-btn-view .btn-txt,
+  .topbar-btn-out .btn-txt { display: none; }
+  .topbar-actions .btn.sm { min-width: 40px; padding: 8px 10px; font-size: 12px; }
+  .logo { font-size: 14px; }
 }
 .row { padding: 10px 0; gap: 8px; }
 .card-header { flex-wrap: wrap; gap: 8px; }
@@ -459,14 +507,14 @@ html.app-main #config-screen { display: none !important; }
 <div class="topbar">
   <div class="logo">משפחת <span>אפללו</span></div>
   <div class="topbar-actions">
-    <span id="shared-view-badge" class="topbar-meta" title="תצוגה ונתונים משותפים לכל המשפחה">👥</span>
-    <span id="conn-badge" class="topbar-meta" title="פרויקט Supabase"></span>
-    <span id="user-label" class="topbar-meta"></span>
-    <span id="sync-indicator" class="topbar-meta"></span>
-    <button type="button" class="btn sm" onclick="openDisplaySettings()" title="אותה תצוגה לשניכם">תצוגה</button>
-    <button type="button" class="btn sm btn-icon-text" onclick="refreshCurrentPage()" title="רענן נתונים"><span class="btn-ico">⟳</span><span class="btn-txt">רענן</span></button>
+    <button type="button" class="btn sm btn-icon-text topbar-btn-out" id="btn-logout" title="יציאה" onclick="doLogout(); return false;"><span class="btn-ico">⎋</span><span class="btn-txt">יציאה</span></button>
     <button type="button" class="btn sm btn-icon-text" onclick="refreshStocks()" title="עדכן מניות"><span class="btn-ico">📈</span><span class="btn-txt">מניות</span></button>
-    <button type="button" class="btn sm" id="btn-logout" title="יציאה" onclick="doLogout(); return false;">יציאה</button>
+    <button type="button" class="btn sm btn-icon-text" onclick="refreshCurrentPage()" title="רענן נתונים"><span class="btn-ico">⟳</span><span class="btn-txt">רענן</span></button>
+    <button type="button" class="btn sm btn-icon-text topbar-btn-view" onclick="openDisplaySettings()" title="תצוגה משותפת"><span class="btn-ico">▦</span><span class="btn-txt">תצוגה</span></button>
+    <span id="sync-indicator" class="topbar-meta"></span>
+    <span id="user-label" class="topbar-meta"></span>
+    <span id="conn-badge" class="topbar-meta" title="פרויקט Supabase"></span>
+    <span id="shared-view-badge" class="topbar-meta" title="תצוגה ונתונים משותפים לכל המשפחה">👥</span>
   </div>
 </div>
 
@@ -484,13 +532,14 @@ html.app-main #config-screen { display: none !important; }
   <div class="sec" id="ov-cf-title">תזרים</div>
   <div class="card" id="ov-cf"></div>
   <details class="ov-more-details">
-    <summary>עוד: שווי נטו, נכסים וחובות</summary>
+    <summary>עוד: שווי נטו, נכסים וחוב</summary>
     <div id="ov-details" class="mrow" style="margin-top:.75rem"></div>
   </details>
 </div>
 
 <div id="page-finance" class="page">
   <div id="fin-summary" class="mrow"></div>
+  <div id="cf-bar" class="card fin-cf-visual"></div>
   <div class="sec">הלוואות</div>
   <div class="card loans-prominent">
     <div class="card-header">
@@ -500,7 +549,6 @@ html.app-main #config-screen { display: none !important; }
     <p class="hint" style="margin:0 0 .75rem;padding:0 .15rem">רכב, הלוואה אישית, משכנתא שאינה בנדל״ן. מינוף על קרן השתלמות/גמל — ב<strong>חסכונות</strong>.</p>
     <div id="loans-list"></div>
   </div>
-  <div id="cf-bar" class="card" style="margin-bottom:.85rem"></div>
   <div class="sec">הכנסות</div>
   <div class="card cf-table-card income">
     <div class="card-header">
@@ -595,14 +643,25 @@ html.app-main #config-screen { display: none !important; }
   <div class="card shop-card">
     <div class="card-header">
       <span class="card-title">🛒 רשימת סופר</span>
-      <button class="btn sm" type="button" onclick="om('shop')">+ פרטים</button>
+      <span id="shop-live-hint" class="shop-live-hint" hidden>מסתנכרן</span>
+    </div>
+    <div id="shop-quick" class="shop-quick-wrap">
+      <div class="shop-quick">
+        <select id="shop-quick-cat" aria-label="קטגוריה"></select>
+        <input id="shop-quick-name" type="text" placeholder="הוסף פריט ולחץ Enter" autocomplete="off">
+        <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
+      </div>
+      <label class="shop-save-staple-lbl"><input type="checkbox" id="shop-save-staple"> שמור ברשימה הקבועה</label>
     </div>
     <div id="shop-progress"></div>
     <div id="shop-toolbar"></div>
-    <div id="shop-tpl"></div>
     <div id="shop-list"></div>
-    <div id="shop-done-wrap"></div>
-    <div id="shop-quick"></div>
+    <details class="shop-staples-drawer" id="shop-staples-drawer">
+      <summary id="shop-staples-summary">הרשימה הקבועה</summary>
+      <p class="hint shop-staples-hint">פריטים שחוזרים בכל קנייה. «הכן לקנייה» מעתיק אותם לרשימה למטה.</p>
+      <div id="shop-staples-list"></div>
+      <button type="button" class="btn sm" onclick="om('staple')">+ לרשימה הקבועה</button>
+    </details>
   </div>
   <div class="two">
     <div>
@@ -750,6 +809,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=36"></script>
+<script src="app.js?v=47"></script>
 </body>
 </html>

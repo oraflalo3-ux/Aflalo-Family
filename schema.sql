@@ -108,7 +108,21 @@ create table properties (
   created_at timestamptz default now()
 );
 
--- הוצאות חד-פעמיות לנכס
+-- הוצאות לפי נכס (חודשי / חד-פעמי) — מקור אחיד
+create table asset_expenses (
+  id uuid primary key default gen_random_uuid(),
+  asset_type text not null,
+  asset_id uuid not null,
+  name text not null,
+  amount numeric not null default 0,
+  kind text not null default 'once',
+  expense_date text default '',
+  note text default '',
+  created_at timestamptz default now()
+);
+create index asset_expenses_asset_idx on asset_expenses (asset_type, asset_id);
+
+-- הוצאות חד-פעמיות לנכס (ישן — מועבר ל-asset_expenses)
 create table property_expenses (
   id uuid primary key default gen_random_uuid(),
   property_id uuid references properties(id) on delete cascade,
@@ -125,8 +139,22 @@ create table cars (
   model text not null,
   year int default 2020,
   plate text default '',
+  odometer_km int default 0,
   created_at timestamptz default now()
 );
+
+-- יומן טיפולים / טסטים שבוצעו
+create table car_service_log (
+  id uuid primary key default gen_random_uuid(),
+  car_id uuid references cars(id) on delete cascade,
+  type text not null,
+  performed_date text not null,
+  odometer_km int not null default 0,
+  cost numeric default 0,
+  note text default '',
+  created_at timestamptz default now()
+);
+create index car_service_log_car_idx on car_service_log (car_id, performed_date desc);
 
 -- אירועי רכב
 create table car_events (
@@ -139,7 +167,7 @@ create table car_events (
   created_at timestamptz default now()
 );
 
--- קניות
+-- קניות — רשימה לקנייה הנוכחית
 create table shopping (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -150,6 +178,17 @@ create table shopping (
   done boolean default false,
   created_at timestamptz default now()
 );
+
+-- קניות — רשימה קבועה (תבנית משפחתית)
+create table shopping_staples (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  qty text default '1',
+  category text default 'other',
+  sort_order int default 0,
+  created_at timestamptz default now()
+);
+create unique index shopping_staples_name_lower_idx on shopping_staples (lower(trim(name)));
 
 -- חוגים
 create table activities (
@@ -264,8 +303,8 @@ declare
 begin
   foreach t in array array[
     'savings_cats','savings_accounts','savings_stocks','savings_loans',
-    'loans','credit_cards','cashflow','cashflow_monthly','properties','property_expenses',
-    'cars','car_events','shopping','activities','tasks','reminders',
+    'loans','credit_cards','cashflow','cashflow_monthly','properties','property_expenses','asset_expenses',
+    'cars','car_events','car_service_log','shopping','shopping_staples','activities','tasks','reminders',
     'family_prefs','alert_defs','alert_history'
   ]
   loop
