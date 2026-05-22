@@ -1,4 +1,4 @@
-// ביתשלנו — app.js
+// משפחת אפללו — app.js
 // Supabase client
 let sb = null;
 let stockPrices = {};
@@ -40,8 +40,19 @@ function normalizeUsername(raw) {
   return u.includes('@') ? u : `${u}@${getAuthDomain()}`;
 }
 
+function normalizeSupabaseUrl(raw) {
+  let u = (raw || '').trim();
+  u = u.replace(/^\/+/, '');
+  if (u.startsWith('http://')) u = 'https://' + u.slice(7);
+  if (!u.startsWith('https://') && u.includes('.supabase.co')) u = 'https://' + u;
+  u = u.replace(/\/rest\/v1\/?$/i, '');
+  u = u.replace(/\/auth\/v1\/?$/i, '');
+  u = u.replace(/\/+$/, '');
+  return u;
+}
+
 function isValidSupabaseUrl(url) {
-  const u = (url || '').trim().replace(/\/$/, '');
+  const u = normalizeSupabaseUrl(url);
   return /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u);
 }
 
@@ -53,11 +64,11 @@ function isValidSupabaseKey(key) {
 function getSupabaseCredentials() {
   const cfg = window.APP_CONFIG;
   if (cfg?.supabaseUrl && cfg?.supabaseAnonKey) {
-    const url = cfg.supabaseUrl.trim().replace(/\/$/, '');
+    const url = normalizeSupabaseUrl(cfg.supabaseUrl);
     const key = cfg.supabaseAnonKey.trim();
     if (isValidSupabaseUrl(url) && isValidSupabaseKey(key)) return { url, key };
   }
-  const url = (localStorage.getItem('sb_url') || '').trim().replace(/\/$/, '');
+  const url = normalizeSupabaseUrl(localStorage.getItem('sb_url') || '');
   const key = (localStorage.getItem('sb_key') || '').trim();
   if (!url || !key) return null;
   if (!isValidSupabaseUrl(url) || !isValidSupabaseKey(key)) {
@@ -78,7 +89,7 @@ function showConfigError(msg) {
   }
 }
 
-async function testSupabaseConnection(url, key) {
+async function testSupabaseConnection(url, key, timeoutMs = 8000) {
   if (!isValidSupabaseUrl(url)) {
     return { ok: false, msg: 'כתובת שגויה. דוגמה: https://abcdefgh.supabase.co' };
   }
@@ -86,9 +97,12 @@ async function testSupabaseConnection(url, key) {
     return { ok: false, msg: 'מפתח שגוי. העתק Publishable (sb_publishable_...) או anon (eyJ...) מ-API Keys' };
   }
   const base = url.replace(/\/$/, '');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${base}/auth/v1/settings`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` }
+      signal: controller.signal,
+      headers: { apikey: key }
     });
     if (res.status === 401 || res.status === 403) {
       return { ok: false, msg: 'מפתח API נדחה. ודא שזה Publishable/anon — לא Secret key' };
@@ -98,8 +112,25 @@ async function testSupabaseConnection(url, key) {
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, msg: 'אין גישה ל-Supabase מהדפדפן: ' + (e.message || 'שגיאת רשת') };
+    if (e.name === 'AbortError') {
+      return { ok: false, msg: 'הבדיקה נמשכה יותר מדי (רשת איטית). נסי "שמור בלי בדיקה" או WiFi' };
+    }
+    return { ok: false, msg: 'אין גישה ל-Supabase: ' + (e.message || 'שגיאת רשת') };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+function persistSupabaseConfig(url, key) {
+  try {
+    localStorage.setItem('sb_url', url);
+    localStorage.setItem('sb_key', key);
+  } catch (e) {
+    showConfigError('הדפדפן חוסם שמירה. בטלי "גלישה פרטית" או אפשרי Cookies');
+    throw e;
+  }
+  initSupabaseClient();
+  sessionStorage.removeItem(LOGOUT_FLAG);
 }
 
 function fillConfigFormFromStorage() {
@@ -155,7 +186,13 @@ function initSupabaseClient() {
     sb = null;
     return false;
   }
-  sb = supabase.createClient(creds.url, creds.key);
+  sb = supabase.createClient(creds.url, creds.key, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: false
+    }
+  });
   return true;
 }
 
@@ -263,17 +300,6 @@ async function boot() {
     return;
   }
 
-  const creds = getSupabaseCredentials();
-  if (creds) {
-    const conn = await testSupabaseConnection(creds.url, creds.key);
-    if (!conn.ok) {
-      fillConfigFormFromStorage();
-      showConfigError(conn.msg);
-      showConfig();
-      return;
-    }
-  }
-
   sb.auth.onAuthStateChange((event, session) => {
     if (isLoggingOut) return;
     if (event === 'SIGNED_OUT' || !session) {
@@ -297,27 +323,58 @@ async function boot() {
   await init();
 }
 
-async function saveConfig() {
-  const url = document.getElementById('cfg-url').value.trim().replace(/\/$/, '');
-  const key = document.getElementById('cfg-key').value.trim();
+function setConfigBusy(busy) {
+  const btn = document.getElementById('btn-save-config');
+  const btn2 = document.getElementById('btn-save-config-skip');
+  if (btn) {
+    btn.disabled = busy;
+    btn.textContent = busy ? 'בודק...' : 'בדוק חיבור ושמור';
+  }
+  if (btn2) btn2.disabled = busy;
+}
+
+async function saveConfig(skipNetworkTest) {
+  const url = normalizeSupabaseUrl(document.getElementById('cfg-url').value);
+  const key = document.getElementById('cfg-key').value.trim().replace(/\s+/g, '');
+  document.getElementById('cfg-url').value = url;
   showConfigError('');
   if (!url || !key) {
     showConfigError('הכנס URL ומפתח Publishable');
+    toast('חסר URL או מפתח');
     return;
   }
-  const conn = await testSupabaseConnection(url, key);
-  if (!conn.ok) {
-    showConfigError(conn.msg);
+  if (!isValidSupabaseUrl(url) || !isValidSupabaseKey(key)) {
+    showConfigError('URL או מפתח לא בפורמט הנכון');
     return;
   }
-  localStorage.setItem('sb_url', url);
-  localStorage.setItem('sb_key', key);
-  toast('חיבור תקין ✓');
-  initSupabaseClient();
-  sessionStorage.removeItem(LOGOUT_FLAG);
-  showLogin();
+
+  setConfigBusy(true);
+  toast(skipNetworkTest ? 'שומר...' : 'בודק חיבור...');
+
+  try {
+    if (!skipNetworkTest) {
+      const conn = await testSupabaseConnection(url, key);
+      if (!conn.ok) {
+        showConfigError(conn.msg);
+        toast('לא נשמר — תקני לפי ההודעה');
+        document.getElementById('cfg-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+    }
+    persistSupabaseConfig(url, key);
+    toast('נשמר ✓ — עכשיו התחברי עם אימייל וסיסמה');
+    showLogin();
+    document.getElementById('login-user')?.focus();
+  } catch (e) {
+    console.error('saveConfig', e);
+    showConfigError(e.message || 'שגיאה בשמירה');
+    toast('שגיאה בשמירה');
+  } finally {
+    setConfigBusy(false);
+  }
 }
-window.saveConfig = saveConfig;
+window.saveConfig = () => saveConfig(false);
+window.saveConfigSkipTest = () => saveConfig(true);
 
 // ── Init ─────────────────────────────────────────────────
 async function init() {
@@ -872,7 +929,7 @@ async function shareWA() {
     + props.reduce((a, p) => a + Number(p.rental_income || 0), 0);
   const exp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0)
     + props.reduce((a, p) => a + Number(p.monthly_mortgage || 0) + Number(p.monthly_expenses || 0), 0);
-  let msg = `*ביתשלנו — סיכום*\n${new Date().toLocaleDateString('he-IL')}\n\n`;
+  let msg = `*משפחת אפללו — סיכום*\n${new Date().toLocaleDateString('he-IL')}\n\n`;
   msg += `💵 תזרים נטו: ₪${fmt(inc - exp)}\n`;
   msg += `📈 הכנסות: ₪${fmt(inc)}\n`;
   msg += `📉 הוצאות: ₪${fmt(exp)}\n`;

@@ -1,14 +1,15 @@
 {
-  "name": "ביתשלנו",
-  "short_name": "ביתשלנו",
-  "description": "ניהול פיננסי משפחתי",
-  "start_url": "/",
+  "name": "משפחת אפללו",
+  "short_name": "משפחת אפללו",
+  "description": "משפחת אפללו — ניהול פיננסי משפחתי",
+  "start_url": "https://oraflalo3-ux.github.io/bayit-shelanu/index.html",
+  "scope": "https://oraflalo3-ux.github.io/bayit-shelanu/",
   "display": "standalone",
   "background_color": "#F5F5F3",
   "theme_color": "#0F6E56",
   "dir": "rtl",
   "lang": "he",
   "icons": [
-    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "https://oraflalo3-ux.github.io/bayit-shelanu/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]
 }

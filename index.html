@@ -4,13 +4,44 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="ביתשלנו">
+<meta name="apple-mobile-web-app-title" content="משפחת אפללו">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<title>ביתשלנו</title>
+<title>משפחת אפללו</title>
 <link rel="apple-touch-icon" href="icon.svg">
+<link rel="manifest" href="manifest.json" id="app-manifest">
+<script>
+(function () {
+  var path = location.pathname;
+  var dir = path.endsWith('/') ? path : path.replace(/\/[^/]*$/, '/');
+  if (!dir || dir === '/') dir = '/bayit-shelanu/';
+  var base = location.origin + dir;
+  var start = base + 'index.html';
+  window.__APP_BASE__ = base;
+  if (window.navigator.standalone && !path.includes('bayit-shelanu')) {
+    location.replace(start);
+    return;
+  }
+  var manifest = {
+    name: 'משפחת אפללו',
+    short_name: 'משפחת אפללו',
+    description: 'משפחת אפללו — ניהול פיננסי משפחתי',
+    start_url: start,
+    scope: base,
+    display: 'standalone',
+    background_color: '#F5F5F3',
+    theme_color: '#0F6E56',
+    dir: 'rtl',
+    lang: 'he',
+    icons: [{ src: base + 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
+  };
+  var link = document.getElementById('app-manifest');
+  try {
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }));
+  } catch (e) { /* manifest.json */ }
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.8/dist/umd/supabase.min.js"></script>
 <script src="config.js"></script>
-<link rel="manifest" href="manifest.json">
 <style>
 :root {
   --green: #0F6E56; --green-light: #E1F5EE; --green-mid: #1D9E75;
@@ -218,7 +249,7 @@ html.app-main #config-screen { display: none !important; }
 <div id="login-screen" class="config-screen" style="display:none">
   <div class="config-box">
     <div style="font-size:28px;margin-bottom:.5rem">🏠</div>
-    <h2>ביתשלנו</h2>
+    <h2>משפחת אפללו</h2>
     <p>הכנס <strong>אימייל</strong> ו<strong>סיסמה</strong> — כמו ב-Supabase → Users. (לא מפתח API!)</p>
     <div class="fg"><label>אימייל</label><input id="login-user" placeholder="oraflalo3@gmail.com" dir="ltr" autocomplete="username"></div>
     <div class="fg"><label>סיסמה</label><input id="login-pass" type="password" placeholder="הסיסמה מ-Add user" autocomplete="current-password"></div>
@@ -233,7 +264,7 @@ html.app-main #config-screen { display: none !important; }
 <div id="config-screen" class="config-screen" style="display:none">
   <div class="config-box">
     <div style="font-size:28px;margin-bottom:.5rem">🏠</div>
-    <h2>ביתשלנו — חיבור ל-Supabase</h2>
+    <h2>משפחת אפללו — חיבור ל-Supabase</h2>
     <p style="margin-bottom:.75rem">מ-Supabase: <strong>Project Settings → API</strong> (לא מסך Users!)</p>
     <div class="fg"><label>Project URL</label><input id="cfg-url" placeholder="https://abcdefgh.supabase.co" dir="ltr">
       <div class="hint">רק <span dir="ltr">https://xxxxx.supabase.co</span> — בלי <span dir="ltr">/rest/v1</span> ובלי <span dir="ltr">/</span> בהתחלה</div></div>
@@ -250,7 +281,7 @@ html.app-main #config-screen { display: none !important; }
 <div id="main-app" style="display:none">
 <div class="app">
 <div class="topbar">
-  <div class="logo">בית<span>שלנו</span></div>
+  <div class="logo">משפחת <span>אפללו</span></div>
   <div style="display:flex;align-items:center;gap:8px">
     <span id="user-label" style="font-size:11px;color:var(--text3)"></span>
     <span id="sync-indicator" style="font-size:11px;color:var(--text3)"></span>
@@ -415,6 +446,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=9"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
