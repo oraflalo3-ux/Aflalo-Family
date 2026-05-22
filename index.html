@@ -132,15 +132,40 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .badge.gy { background: var(--bg3); color: var(--text2); }
 
 /* Cashflow history */
-.year-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: .75rem; }
-.year-pill { padding: 6px 12px; border-radius: 16px; border: 0.5px solid var(--border); background: var(--bg2); cursor: pointer; font-size: 13px; touch-action: manipulation; }
-.year-pill.active { background: var(--green-light); border-color: var(--green-mid); color: var(--green); font-weight: 600; }
-.hist-table { width: 100%; font-size: 13px; border-collapse: collapse; }
-.hist-table th, .hist-table td { padding: 8px 10px; border-bottom: 0.5px solid var(--border); text-align: right; }
-.hist-table th { font-size: 11px; color: var(--text2); font-weight: 600; }
-.hist-table tr.hist-year td { font-weight: 700; background: var(--bg3); border-top: 0.5px solid var(--border2); }
-.hist-table tr.hist-draft td { color: var(--text2); font-style: italic; }
-.hist-table tr.hist-empty td { color: var(--text3); }
+.hist-years-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: .85rem; }
+.hist-years-label { font-size: 12px; font-weight: 600; color: var(--text2); margin-left: 4px; }
+.year-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.year-pill { padding: 7px 14px; border-radius: 20px; border: 0.5px solid var(--border); background: var(--bg2); cursor: pointer; font-size: 13px; font-family: var(--font); touch-action: manipulation; transition: background .15s, border-color .15s; }
+.year-pill.active { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
+.hist-stats { margin-bottom: .85rem; }
+.hist-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 0.5px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2); }
+.hist-table { width: 100%; font-size: 13px; border-collapse: collapse; min-width: 320px; }
+.hist-table thead { background: var(--bg3); }
+.hist-table th { padding: 10px 12px; font-size: 11px; color: var(--text2); font-weight: 600; text-align: right; border-bottom: 0.5px solid var(--border2); white-space: nowrap; }
+.hist-table th.hist-col-num { text-align: left; }
+.hist-table td { padding: 10px 12px; border-bottom: 0.5px solid var(--border); vertical-align: middle; }
+.hist-table tbody tr:last-child td { border-bottom: none; }
+.hist-table tbody tr:nth-child(even):not(.hist-draft):not(.hist-empty) { background: rgba(0,0,0,.02); }
+@media (prefers-color-scheme: dark) {
+  .hist-table tbody tr:nth-child(even):not(.hist-draft):not(.hist-empty) { background: rgba(255,255,255,.03); }
+}
+.hist-month { font-weight: 500; min-width: 5.5rem; }
+.hist-num { text-align: left; direction: ltr; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.hist-num.g { color: var(--green); }
+.hist-num.r { color: var(--red); }
+.hist-muted { color: var(--text3); font-weight: 400; text-align: center !important; direction: rtl; }
+.hist-act { width: 3rem; text-align: center; padding-left: 6px !important; padding-right: 6px !important; }
+.hist-draft { background: var(--amber-light) !important; }
+.hist-draft .hist-month { font-style: normal; }
+.hist-empty { opacity: .65; }
+.hist-table tfoot td { padding: 12px; font-weight: 700; background: linear-gradient(180deg, var(--bg3) 0%, var(--bg2) 100%); border-top: 2px solid var(--green-mid); }
+.hist-table tfoot .hist-year-label { font-size: 14px; color: var(--text); }
+.hist-table tfoot .hist-year-sub { font-size: 11px; font-weight: 500; color: var(--text2); display: block; margin-top: 2px; }
+.hist-legend { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; margin-top: .75rem; font-size: 11px; color: var(--text3); }
+.hist-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.hist-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.hist-dot-draft { background: #BA7517; }
+.hist-dot-closed { background: var(--green-mid); }
 
 .cf-sec-title { font-size: 11px; font-weight: 600; color: var(--text2); margin: .65rem 0 .35rem; padding-top: .5rem; border-top: 0.5px solid var(--border); }
 .cf-sec-title:first-child { border-top: none; padding-top: 0; margin-top: 0; }
@@ -221,6 +246,12 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .cf-table-card.income .card-title { color: var(--green); }
 .cf-table-card.expense .card-title { color: var(--red); }
 .cf-table-card .cf-inline-amt { width: 100%; max-width: 6.5rem; }
+.loans-prominent {
+  border: 0.5px solid rgba(216, 90, 48, 0.35);
+  background: linear-gradient(135deg, var(--red-light) 0%, var(--bg2) 55%);
+}
+.loans-prominent .card-title { color: var(--red); }
+.loans-totals { margin-bottom: .75rem; }
 .cf-tpl-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .75rem; }
 .cf-tpl { font-size: 11px !important; min-height: 32px !important; padding: 6px 10px !important; }
 .cf-inline-amt { width: 5.5rem; padding: 6px 8px; font-size: 14px; font-weight: 600; border: 0.5px solid var(--border2); border-radius: 6px; text-align: left; direction: ltr; background: var(--bg2); }
@@ -429,9 +460,11 @@ html.app-main #config-screen { display: none !important; }
   <div class="sec sec-flex"><span>לטפל עכשיו</span><span id="ov-urgent-count"></span></div>
   <div class="card" id="ov-alerts"></div>
   <div id="ov-quick" class="quick-actions"></div>
+  <div class="sec">פירוט הכנסות</div>
+  <div id="ov-income" class="mrow ov-summary-row"></div>
   <div class="sec">פירוט הוצאות</div>
-  <div id="ov-summary" class="mrow ov-summary-row"></div>
-  <div class="sec" id="ov-cf-title">תזרים החודש</div>
+  <div id="ov-expenses" class="mrow ov-summary-row"></div>
+  <div class="sec" id="ov-cf-title">תזרים</div>
   <div class="card" id="ov-cf"></div>
   <details class="ov-more-details">
     <summary>עוד: שווי נטו, נכסים וחובות</summary>
@@ -441,6 +474,15 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="page-finance" class="page">
   <div id="fin-summary" class="mrow"></div>
+  <div class="sec">הלוואות</div>
+  <div class="card loans-prominent">
+    <div class="card-header">
+      <span class="card-title">הלוואות כלליות</span>
+      <button type="button" class="btn sm primary" onclick="om('loan')">+ הוסף הלוואה</button>
+    </div>
+    <p class="hint" style="margin:0 0 .75rem;padding:0 .15rem">רכב, הלוואה אישית, משכנתא שאינה בנדל״ן. מינוף על קרן השתלמות/גמל — ב<strong>חסכונות</strong>.</p>
+    <div id="loans-list"></div>
+  </div>
   <div id="cf-bar" class="card" style="margin-bottom:.85rem"></div>
   <div class="sec">הכנסות</div>
   <div class="card cf-table-card income">
@@ -485,7 +527,7 @@ html.app-main #config-screen { display: none !important; }
     </div>
   </div>
   <div class="sec">יומן היסטוריה</div>
-  <div class="card">
+  <div class="card cf-history-card">
     <div class="card-header">
       <span class="card-title">סיכום חודשי ושנתי</span>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -493,20 +535,14 @@ html.app-main #config-screen { display: none !important; }
         <button type="button" class="btn sm" onclick="om('cfclose')">חודש אחר…</button>
       </div>
     </div>
-    <p style="font-size:12px;color:var(--text2);margin:0 0 .75rem;padding:0 .25rem">שומר את סיכום ההכנסות וההוצאות (כולל נדל״ן) לפי חודש. בחר שנה לצפייה בסיכום שנתי.</p>
+    <p class="hint" style="margin:0 0 .85rem;padding:0 .15rem;line-height:1.5">סיכום שנסגר לכל חודש (תזרים + נדל״ן). בחר שנה וצפה ב-12 החודשים ובסיכום שנתי.</p>
     <div id="cf-history-years"></div>
     <div id="cf-history-body"></div>
   </div>
   <details class="fin-details card" style="padding:0;overflow:hidden">
-    <summary>הלוואות וכרטיסי אשראי</summary>
+    <summary>כרטיסי אשראי</summary>
     <div style="padding:0 1rem 1rem">
-      <div class="sec" style="margin-top:.5rem">הלוואות</div>
-      <div class="card" style="margin-bottom:.75rem">
-        <div class="card-header"><span class="card-title">הלוואות</span><button class="btn sm" onclick="om('loan')">+ הוסף</button></div>
-        <div id="loans-list"></div>
-      </div>
-      <div class="sec">כרטיסי אשראי</div>
-      <div class="card">
+      <div class="card" style="margin-top:.5rem">
         <div class="card-header"><span class="card-title">כרטיסים</span><button class="btn sm" onclick="om('cc')">+ הוסף</button></div>
         <div id="cc-list"></div>
       </div>
@@ -690,6 +726,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=31"></script>
+<script src="app.js?v=35"></script>
 </body>
 </html>

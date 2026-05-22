@@ -930,9 +930,13 @@ async function renderCashflowHistoryOnly() {
   for (let y = maxY; y >= startY; y--) years.push(y);
   if (!cfHistoryYear || !years.includes(cfHistoryYear)) cfHistoryYear = curY;
 
-  el('cf-history-years', years.map(y =>
+  el('cf-history-years', `
+    <div class="hist-years-bar">
+      <span class="hist-years-label">שנה</span>
+      <div class="year-pills">${years.map(y =>
     `<button type="button" class="year-pill ${y === cfHistoryYear ? 'active' : ''}" onclick="setCfHistoryYear(${y})">${y}</button>`
-  ).join(''));
+  ).join('')}</div>
+    </div>`);
 
   const yearRows = rows.filter(r => r.year === cfHistoryYear);
   const draft = cfHistoryYear === curY ? calcCashflowTotals(cf, props) : null;
@@ -947,39 +951,67 @@ async function renderCashflowHistoryOnly() {
       yInc += Number(rec.income_total);
       yExp += Number(rec.expense_total);
       bodyRows.push(`<tr>
-        <td>${MONTH_NAMES_HE[m]}</td>
-        <td class="g">₪${fmt(rec.income_total)}</td>
-        <td class="r">₪${fmt(rec.expense_total)}</td>
-        <td class="${net >= 0 ? 'g' : 'r'}">₪${fmt(net)}</td>
-        <td><button type="button" class="btn icon-only" onclick="del('cashflow_monthly','${rec.id}',true)" title="מחק סיכום">🗑</button></td>
+        <td class="hist-month">${MONTH_NAMES_HE[m]}</td>
+        <td class="hist-num g">₪${fmt(rec.income_total)}</td>
+        <td class="hist-num r">₪${fmt(rec.expense_total)}</td>
+        <td class="hist-num ${net >= 0 ? 'g' : 'r'}">₪${fmt(net)}</td>
+        <td class="hist-act"><button type="button" class="btn icon-only" onclick="del('cashflow_monthly','${rec.id}',true)" title="מחק סיכום">🗑</button></td>
       </tr>`);
     } else if (cfHistoryYear === curY && m === curM && draft) {
       bodyRows.push(`<tr class="hist-draft">
-        <td>${MONTH_NAMES_HE[m]} <span class="badge gy">טיוטה</span></td>
-        <td class="g">₪${fmt(draft.income)}</td>
-        <td class="r">₪${fmt(draft.expense)}</td>
-        <td class="${draft.net >= 0 ? 'g' : 'r'}">₪${fmt(draft.net)}</td>
-        <td><button type="button" class="btn sm" onclick="closeCashflowMonth()">סגור</button></td>
+        <td class="hist-month">${MONTH_NAMES_HE[m]} <span class="badge am">טיוטה</span></td>
+        <td class="hist-num g">₪${fmt(draft.income)}</td>
+        <td class="hist-num r">₪${fmt(draft.expense)}</td>
+        <td class="hist-num ${draft.net >= 0 ? 'g' : 'r'}">₪${fmt(draft.net)}</td>
+        <td class="hist-act"><button type="button" class="btn sm" onclick="closeCashflowMonth()">סגור</button></td>
       </tr>`);
     } else {
-      bodyRows.push(`<tr class="hist-empty"><td>${MONTH_NAMES_HE[m]}</td><td colspan="4">—</td></tr>`);
+      bodyRows.push(`<tr class="hist-empty">
+        <td class="hist-month">${MONTH_NAMES_HE[m]}</td>
+        <td class="hist-num hist-muted">—</td>
+        <td class="hist-num hist-muted">—</td>
+        <td class="hist-num hist-muted">—</td>
+        <td class="hist-act"></td>
+      </tr>`);
     }
   }
   const yNet = yInc - yExp;
   const closedCount = yearRows.length;
+  const yearSub = closedCount < 12 ? `${closedCount} חודשים נסגרו` : 'כל החודשים נסגרו';
+
   el('cf-history-body', `
-    <table class="hist-table">
-      <thead><tr><th>חודש</th><th>הכנסות</th><th>הוצאות</th><th>נטו</th><th></th></tr></thead>
-      <tbody>${bodyRows.join('')}
-        <tr class="hist-year">
-          <td>סיכום שנתי ${cfHistoryYear}${closedCount < 12 ? ` (${closedCount} חודשים)` : ''}</td>
-          <td class="g">₪${fmt(yInc)}</td>
-          <td class="r">₪${fmt(yExp)}</td>
-          <td class="${yNet >= 0 ? 'g' : 'r'}">₪${fmt(yNet)}</td>
-          <td></td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="hist-stats mrow">
+      <div class="met"><div class="ml">הכנסות ${cfHistoryYear}</div><div class="mv g">₪${fmt(yInc)}</div></div>
+      <div class="met"><div class="ml">הוצאות ${cfHistoryYear}</div><div class="mv r">₪${fmt(yExp)}</div></div>
+      <div class="met"><div class="ml">נטו שנתי</div><div class="mv ${yNet >= 0 ? 'g' : 'r'}">₪${fmt(yNet)}</div></div>
+      <div class="met"><div class="ml">חודשים שנסגרו</div><div class="mv">${closedCount}/12</div></div>
+    </div>
+    <div class="hist-table-scroll">
+      <table class="hist-table">
+        <thead><tr>
+          <th>חודש</th>
+          <th class="hist-col-num">הכנסות</th>
+          <th class="hist-col-num">הוצאות</th>
+          <th class="hist-col-num">נטו</th>
+          <th class="hist-act"></th>
+        </tr></thead>
+        <tbody>${bodyRows.join('')}</tbody>
+        <tfoot>
+          <tr>
+            <td><span class="hist-year-label">סיכום ${cfHistoryYear}</span><span class="hist-year-sub">${yearSub}</span></td>
+            <td class="hist-num g">₪${fmt(yInc)}</td>
+            <td class="hist-num r">₪${fmt(yExp)}</td>
+            <td class="hist-num ${yNet >= 0 ? 'g' : 'r'}">₪${fmt(yNet)}</td>
+            <td class="hist-act"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="hist-legend">
+      <span><i class="hist-dot hist-dot-closed"></i> חודש שנסגר ונשמר</span>
+      <span><i class="hist-dot hist-dot-draft"></i> טיוטה — החודש הנוכחי, עדיין לא נסגר</span>
+      <span>— חודש ללא סיכום</span>
+    </div>
   `);
 }
 
@@ -1033,12 +1065,16 @@ async function renderOverview() {
   const reTotal = props.reduce((a, p) => a + Number(p.value || 0), 0);
   const reMort = props.reduce((a, p) => a + Number(p.mortgage || 0), 0);
   const loanTotal = loans.reduce((a, l) => a + Number(l.balance || 0), 0);
+  const savLoanTotal = savLoans.reduce((a, l) => a + Number(l.balance || 0), 0);
   const totalAssets = savTotal + reTotal;
-  const totalDebt = loanTotal + reMort + savLoans.reduce((a, l) => a + Number(l.balance || 0), 0);
+  const totalDebt = loanTotal + reMort + savLoanTotal;
   const netWorth = totalAssets - totalDebt;
 
   const { income, expense: expenses, net: cfNet } = calcCashflowTotals(cf, props);
 
+  const fixedInc = cf.filter(c => c.type === 'income' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
+  const varInc = cf.filter(c => c.type === 'income' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
+  const rentInc = props.reduce((a, p) => a + Number(p.rental_income || 0), 0);
   const fixedExp = cf.filter(c => c.type === 'expense' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const varExp = cf.filter(c => c.type === 'expense' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const monthLabel = getHebrewMonthYearLabel();
@@ -1052,9 +1088,18 @@ async function renderOverview() {
     </div>
   `);
 
-  el('ov-summary', `
-    <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv">₪${fmt(fixedExp)}</div></div>
-    <div class="met"><div class="ml">הוצאות משתנות</div><div class="mv">₪${fmt(varExp)}</div></div>
+  const incomeMet = [
+    `<div class="met"><div class="ml">הכנסות קבועות</div><div class="mv g">₪${fmt(fixedInc)}</div></div>`,
+    `<div class="met"><div class="ml">הכנסות משתנות</div><div class="mv g">₪${fmt(varInc)}</div></div>`
+  ];
+  if (rentInc > 0) {
+    incomeMet.push(`<div class="met"><div class="ml">שכירות (נדל״ן)</div><div class="mv g">₪${fmt(rentInc)}</div></div>`);
+  }
+  el('ov-income', incomeMet.join(''));
+
+  el('ov-expenses', `
+    <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv r">₪${fmt(fixedExp)}</div></div>
+    <div class="met"><div class="ml">הוצאות משתנות</div><div class="mv r">₪${fmt(varExp)}</div></div>
   `);
 
   el('ov-quick', `
@@ -1071,7 +1116,7 @@ async function renderOverview() {
     <div class="met"><div class="ml">שווי נטו</div><div class="mv g">₪${fmt(netWorth)}</div></div>
     <div class="met"><div class="ml">נכסים</div><div class="mv b">₪${fmt(totalAssets)}</div></div>
     <div class="met"><div class="ml">חובות</div><div class="mv r">₪${fmt(totalDebt)}</div></div>
-    <div class="met"><div class="ml">הלוואות+כרטיסים</div><div class="mv">${loans.length + cc.length}</div><div class="ms">בתזרים → עוד</div></div>
+    <div class="met"><div class="ml">חובות כולל</div><div class="mv r">₪${fmt(totalDebt)}</div><div class="ms">הלוואות+משכנתאות+מינוף</div></div>
   `);
 
   // התראות — רק באיחור (לא "בקרוב")
@@ -1108,9 +1153,7 @@ async function renderOverview() {
   const ip = Math.round(income / tot * 100);
   el('ov-cf', `
     <div class="cfbar"><div class="cfi" style="width:${ip}%">₪${fmt(income)}</div><div class="cfe" style="width:${100 - ip}%">₪${fmt(expenses)}</div></div>
-    <div style="font-size:11px;color:var(--text2);margin:.5rem 0 .75rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
-    <button type="button" class="btn primary" style="width:100%;justify-content:center;padding:12px" onclick="closeCashflowMonth()">📅 סגרתי את החודש — שמור להיסטוריה</button>
-    <p class="hint" style="margin-top:.5rem;text-align:center">קבועות נשארות לבד · עדכן משתנות ואז סגור חודש</p>
+    <div style="font-size:11px;color:var(--text2);margin-top:.5rem;display:flex;gap:1rem"><span style="color:var(--green-mid)">■</span> הכנסות <span style="color:var(--red-mid)">■</span> הוצאות</div>
   `);
 
   updateAlertBadge(overdueAlerts.length + overdueCarEvents.length);
@@ -1124,6 +1167,17 @@ function calcSavTotal(cats, accs, stocks, savLoans) {
   }, 0);
   const loanTotal = savLoans.reduce((a, l) => a + Number(l.balance || 0), 0);
   return accTotal + stTotal - loanTotal;
+}
+
+function renderLoansListHtml(loans) {
+  return loans.map(l => `
+    <div class="row">
+      <div><div class="row-name">${l.name}</div><div class="row-meta">${l.note || ''}</div></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="text-align:left"><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">₪${fmt(l.monthly)}/חודש</div></div>
+        <button class="btn icon-only" onclick="del('loans','${l.id}',true)">🗑</button>
+      </div>
+    </div>`).join('') || '<div class="empty">אין הלוואות — לחץ + הוסף</div>';
 }
 
 function updateAlertBadge(count) {
@@ -1230,14 +1284,7 @@ async function renderFinance() {
     <div class="met"><div class="ml">הוצאות</div><div class="mv">₪${fmt(exp)}</div></div>
   `);
 
-  el('loans-list', loans.map(l => `
-    <div class="row">
-      <div><div class="row-name">${l.name}</div><div class="row-meta">${l.note || ''}</div></div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <div style="text-align:left"><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">₪${fmt(l.monthly)}/חודש</div></div>
-        <button class="btn icon-only" onclick="del('loans','${l.id}')">🗑</button>
-      </div>
-    </div>`).join('') || '<div class="empty">אין הלוואות</div>');
+  el('loans-list', renderLoansListHtml(loans));
 
   el('cc-list', cc.map(c => {
     const pct = Math.min(100, Math.round(c.used / c.credit_limit * 100));
