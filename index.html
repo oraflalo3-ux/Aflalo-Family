@@ -296,9 +296,11 @@ html.app-main #config-screen { display: none !important; }
         <button type="button" class="btn sm" onclick="toggleCfgKeyVisible()" style="flex-shrink:0">הסתר</button>
       </div>
       <div class="hint">מ-<span dir="ltr">API Keys → publishable</span>. באייפון: לחץ והחזק → הדבק</div></div>
+    <p id="cfg-status" style="font-size:13px;color:var(--green);margin-bottom:.5rem;min-height:1.2em;font-weight:600"></p>
     <p id="cfg-error" style="font-size:13px;color:var(--red);margin-bottom:.5rem;display:none;line-height:1.5"></p>
-    <button type="button" class="btn primary" id="btn-save-config" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfig()">בדוק חיבור ושמור</button>
-    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem;font-weight:600" onclick="saveConfigSkipTest()">📱 שמור בלי בדיקה (מומלץ באייפון אם נתקע)</button>
+    <button type="button" class="btn primary" id="btn-save-config-go" style="width:100%;justify-content:center;margin-bottom:.5rem;font-size:16px;padding:14px">שמור והמשך לשלב 2 ←</button>
+    <button type="button" class="btn sm" id="btn-save-config-skip" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfigSkipTest()">שמור בלי בדיקה (אותו דבר)</button>
+    <button type="button" class="btn sm" id="btn-save-config" style="width:100%;justify-content:center;margin-bottom:.5rem" onclick="saveConfig()">בדוק חיבור ואז שמור (אופציונלי)</button>
     <button type="button" class="btn sm" style="width:100%;justify-content:center" onclick="resetStoredConfig()">נקה הגדרות שמורות</button>
   </div>
 </div>
@@ -486,6 +488,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>

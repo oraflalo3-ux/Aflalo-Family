@@ -59,7 +59,13 @@ function isValidSupabaseUrl(url) {
 
 function isValidSupabaseKey(key) {
   const k = sanitizeConfigValue(key);
-  return k.startsWith('eyJ') || k.startsWith('sb_publishable_');
+  if (k.length < 20) return false;
+  return k.startsWith('eyJ') || k.startsWith('sb_') || k.startsWith('sbp_');
+}
+
+function isSecretSupabaseKey(key) {
+  const k = sanitizeConfigValue(key);
+  return k.startsWith('sb_secret_') || k.startsWith('sbr_') || /^service_role$/i.test(k);
 }
 
 function sanitizeConfigValue(raw) {
@@ -92,8 +98,12 @@ function getSupabaseCredentials() {
     const key = cfg.supabaseAnonKey.trim();
     if (isValidSupabaseUrl(url) && isValidSupabaseKey(key)) return { url, key };
   }
-  const url = normalizeSupabaseUrl(localStorage.getItem('sb_url') || '');
-  const key = (localStorage.getItem('sb_key') || '').trim();
+  const url = normalizeSupabaseUrl(
+    localStorage.getItem('sb_url') || sessionStorage.getItem('sb_url') || ''
+  );
+  const key = sanitizeConfigValue(
+    localStorage.getItem('sb_key') || sessionStorage.getItem('sb_key') || ''
+  );
   if (!url || !key) return null;
   if (!isValidSupabaseUrl(url) || !isValidSupabaseKey(key)) {
     console.warn('Invalid stored Supabase config', { url, keyPrefix: key.slice(0, 12) });
@@ -147,16 +157,36 @@ async function testSupabaseConnection(url, key, timeoutMs) {
 }
 
 function persistSupabaseConfig(url, key) {
+  let stored = false;
   try {
     localStorage.setItem('sb_url', url);
     localStorage.setItem('sb_key', key);
+    stored = true;
   } catch (e) {
-    showConfigError('הדפדפן חוסם שמירה. בטלי "גלישה פרטית" או אפשרי Cookies');
-    throw e;
+    console.warn('localStorage', e);
   }
-  initSupabaseClient();
+  try {
+    sessionStorage.setItem('sb_url', url);
+    sessionStorage.setItem('sb_key', key);
+    stored = true;
+  } catch (e) {
+    console.warn('sessionStorage', e);
+  }
+  if (!stored) {
+    throw new Error('Safari חוסם שמירה — כבה גלישה פרטית או השתמש ב-config.js');
+  }
+  try {
+    if (typeof supabase !== 'undefined') initSupabaseClient();
+  } catch (e) {
+    console.warn('initSupabaseClient', e);
+  }
   updateConnectionBadge();
   sessionStorage.removeItem(LOGOUT_FLAG);
+}
+
+function setCfgStatus(msg) {
+  const el = document.getElementById('cfg-status');
+  if (el) el.textContent = msg || '';
 }
 
 function fillConfigFormFromStorage() {
@@ -377,59 +407,85 @@ function setConfigBusy(busy) {
   if (btn2) btn2.disabled = busy;
 }
 
+function goToLoginStep(msg) {
+  setCfgStatus('');
+  setAppScreen('login');
+  showLogin(msg || 'הזן אימייל וסיסמה מ-Supabase → Users');
+  requestAnimationFrame(() => {
+    document.getElementById('login-screen')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('login-user')?.focus();
+  });
+}
+
 async function saveConfig(skipNetworkTest) {
-  if (!isStorageAvailable()) {
-    showConfigError('אי אפשר לשמור בהגדרות Safari. כבה גלישה פרטית, או פרסם config.js עם המפתחות');
+  setCfgStatus('שומר...');
+  showConfigError('');
+
+  const urlEl = document.getElementById('cfg-url');
+  const keyEl = document.getElementById('cfg-key');
+  if (!urlEl || !keyEl) {
+    showConfigError('שגיאת דף — רענן את Safari');
+    setCfgStatus('');
     return;
   }
-  const url = normalizeSupabaseUrl(sanitizeConfigValue(document.getElementById('cfg-url').value));
-  const key = sanitizeConfigValue(document.getElementById('cfg-key').value);
-  document.getElementById('cfg-url').value = url;
-  document.getElementById('cfg-key').value = key;
-  showConfigError('');
+
+  const url = normalizeSupabaseUrl(sanitizeConfigValue(urlEl.value));
+  const key = sanitizeConfigValue(keyEl.value);
+  urlEl.value = url;
+  keyEl.value = key;
+
   if (!url || !key) {
     showConfigError('הכנס URL ומפתח Publishable');
+    setCfgStatus('');
     toast('חסר URL או מפתח');
     return;
   }
   if (!isValidSupabaseUrl(url)) {
     showConfigError('URL שגוי. דוגמה: https://abcdefgh.supabase.co (בלי /rest/v1)');
+    setCfgStatus('');
+    return;
+  }
+  if (isSecretSupabaseKey(key)) {
+    showConfigError('זה מפתח Secret — העתק Publishable / anon בלבד');
+    setCfgStatus('');
     return;
   }
   if (!isValidSupabaseKey(key)) {
-    showConfigError('מפתח שגוי. העתק Publishable (sb_publishable_...) או anon (eyJ...) — לא Secret key');
-    return;
-  }
-  if (/service_role|secret/i.test(key)) {
-    showConfigError('זה מפתח Secret — מסוכן! השתמש רק ב-Publishable / anon');
+    showConfigError('מפתח קצר מדי או לא מזוהה. העתק שוב מ-API Keys → publishable / anon');
+    setCfgStatus('');
     return;
   }
 
   setConfigBusy(true);
-  toast(skipNetworkTest ? 'שומר...' : 'בודק חיבור (עד 15 שנ)...');
+  toast(skipNetworkTest ? 'שומר...' : 'בודק חיבור...');
 
   try {
     if (!skipNetworkTest) {
       const conn = await testSupabaseConnection(url, key);
       if (!conn.ok) {
-        showConfigError(conn.msg + ' — או לחץ «שמור בלי בדיקה»');
-        toast('לא נשמר');
+        showConfigError(conn.msg);
+        setCfgStatus('לא נשמר');
+        toast('נסה «שמור והמשך לשלב 2»');
         document.getElementById('cfg-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
       }
     }
     persistSupabaseConfig(url, key);
     sessionStorage.setItem('config_just_saved', '1');
-    toast('נשמר ✓');
-    showLogin('שלב 2: הזן אימייל וסיסמה מ-Supabase → Users (לא מפתח API)');
-    document.getElementById('login-user')?.focus();
+    toast('עובר לשלב 2 ✓');
+    goToLoginStep('שלב 2: הזן אימייל וסיסמה (מ-Supabase → Users). לא מפתח API!');
   } catch (e) {
     console.error('saveConfig', e);
     showConfigError(e.message || 'שגיאה בשמירה');
+    setCfgStatus('שגיאה');
     toast('שגיאה בשמירה');
   } finally {
     setConfigBusy(false);
   }
+}
+
+async function saveConfigAndContinue() {
+  await saveConfig(true);
 }
 
 function toggleCfgKeyVisible() {
@@ -443,6 +499,7 @@ function toggleCfgKeyVisible() {
 window.toggleCfgKeyVisible = toggleCfgKeyVisible;
 window.saveConfig = () => saveConfig(false);
 window.saveConfigSkipTest = () => saveConfig(true);
+window.saveConfigAndContinue = saveConfigAndContinue;
 
 // ── Init ─────────────────────────────────────────────────
 async function init() {
@@ -1451,9 +1508,22 @@ function bindUi() {
   });
   ['cfg-url', 'cfg-key'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') saveConfig(false);
+      if (e.key === 'Enter') { e.preventDefault(); saveConfig(true); }
     });
   });
+  const bindCfgBtn = (id, fn) => {
+    const btn = document.getElementById(id);
+    if (!btn || btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    });
+  };
+  bindCfgBtn('btn-save-config', () => saveConfig(false));
+  bindCfgBtn('btn-save-config-skip', () => saveConfig(true));
+  bindCfgBtn('btn-save-config-go', () => saveConfig(true));
   const logoutBtn = document.getElementById('btn-logout');
   if (logoutBtn && !logoutBtn.dataset.bound) {
     logoutBtn.dataset.bound = '1';
