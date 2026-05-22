@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ביתשלנו</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="manifest" href="manifest.json">
+<style>
+:root {
+  --green: #0F6E56; --green-light: #E1F5EE; --green-mid: #1D9E75;
+  --red: #A32D2D; --red-light: #FCEBEB; --red-mid: #D85A30;
+  --blue: #185FA5; --blue-light: #E6F1FB;
+  --amber: #854F0B; --amber-light: #FAEEDA;
+  --bg: #F5F5F3; --bg2: #FFFFFF; --bg3: #EFEFED;
+  --text: #1a1a1a; --text2: #666; --text3: #999;
+  --border: rgba(0,0,0,0.1); --border2: rgba(0,0,0,0.18);
+  --radius: 8px; --radius-lg: 12px;
+  --font: -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1a1a; --bg2: #252525; --bg3: #2f2f2f;
+    --text: #f0f0f0; --text2: #aaa; --text3: #666;
+    --border: rgba(255,255,255,0.1); --border2: rgba(255,255,255,0.2);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; direction: rtl; }
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* Topbar */
+.topbar { background: var(--bg2); border-bottom: 0.5px solid var(--border); padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; height: 52px; position: sticky; top: 0; z-index: 100; }
+.logo { font-size: 16px; font-weight: 600; } .logo span { color: var(--green); }
+.alert-count { background: var(--red-mid); color: #fff; border-radius: 50%; width: 18px; height: 18px; font-size: 11px; display: inline-flex; align-items: center; justify-content: center; margin-right: 4px; }
+
+/* Bottom nav (mobile) */
+.bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg2); border-top: 0.5px solid var(--border); display: flex; z-index: 100; padding-bottom: env(safe-area-inset-bottom); }
+.nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 4px; cursor: pointer; border: none; background: none; color: var(--text2); font-family: var(--font); font-size: 10px; gap: 3px; transition: color .15s; position: relative; }
+.nav-item.active { color: var(--green); }
+.nav-item svg { width: 22px; height: 22px; }
+.nav-badge { position: absolute; top: 4px; right: calc(50% - 18px); background: var(--red-mid); color: #fff; border-radius: 50%; width: 15px; height: 15px; font-size: 9px; display: flex; align-items: center; justify-content: center; }
+
+/* Pages */
+.page { display: none; padding: 1rem; padding-bottom: 80px; }
+.page.active { display: block; }
+
+/* Metrics */
+.mrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 1rem; }
+.met { background: var(--bg3); border-radius: var(--radius); padding: .75rem .9rem; }
+.ml { font-size: 11px; color: var(--text2); margin-bottom: 3px; }
+.mv { font-size: 19px; font-weight: 600; }
+.mv.g { color: var(--green); } .mv.r { color: var(--red); } .mv.b { color: var(--blue); } .mv.am { color: var(--amber); }
+.ms { font-size: 11px; color: var(--text3); margin-top: 1px; }
+
+/* Cards */
+.card { background: var(--bg2); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: .9rem 1rem; margin-bottom: .85rem; }
+.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
+.card-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+
+/* Buttons */
+.btn { border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 6px 12px; font-size: 13px; cursor: pointer; background: none; color: var(--text2); font-family: var(--font); display: inline-flex; align-items: center; gap: 4px; transition: background .15s; }
+.btn:hover { background: var(--bg3); }
+.btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
+.btn.primary:hover { background: #085041; }
+.btn.sm { padding: 3px 8px; font-size: 11px; }
+.btn.danger { color: var(--red); }
+.btn.icon-only { padding: 4px; border: none; color: var(--text3); }
+.btn.icon-only:hover { color: var(--red); background: var(--red-light); }
+
+/* Section title */
+.sec { font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; margin: 1.2rem 0 .6rem; }
+.sec:first-child { margin-top: 0; }
+
+/* Rows */
+.row { display: flex; align-items: flex-start; justify-content: space-between; padding: 8px 0; border-bottom: 0.5px solid var(--border); }
+.row:last-child { border-bottom: none; }
+.row-name { font-size: 13px; color: var(--text); }
+.row-meta { font-size: 11px; color: var(--text2); margin-top: 2px; }
+.row-amount { font-size: 13px; font-weight: 600; }
+.row-amount.g { color: var(--green); } .row-amount.r { color: var(--red); } .row-amount.b { color: var(--blue); }
+
+/* Progress */
+.pb { height: 5px; background: var(--bg3); border-radius: 3px; overflow: hidden; margin-top: 5px; }
+.pf { height: 100%; border-radius: 3px; background: var(--green-mid); }
+
+/* Badges */
+.badge { font-size: 11px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+.badge.g { background: var(--green-light); color: var(--green); }
+.badge.r { background: var(--red-light); color: var(--red); }
+.badge.b { background: var(--blue-light); color: var(--blue); }
+.badge.am { background: var(--amber-light); color: var(--amber); }
+.badge.gy { background: var(--bg3); color: var(--text2); }
+
+/* Cashflow bar */
+.cfbar { display: flex; gap: 2px; height: 24px; border-radius: var(--radius); overflow: hidden; margin-bottom: .5rem; }
+.cfi { background: var(--green-mid); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 500; }
+.cfe { background: var(--red-mid); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 500; }
+
+/* Stack bar (leverage) */
+.stack-bar { height: 7px; border-radius: 4px; overflow: hidden; display: flex; margin-top: 5px; }
+.stack-eq { background: var(--green-mid); }
+.stack-ln { background: var(--red-mid); }
+
+/* Collapsible blocks */
+.block { background: var(--bg2); border: 0.5px solid var(--border); border-radius: var(--radius-lg); margin-bottom: .75rem; overflow: hidden; }
+.block-hdr { display: flex; align-items: center; gap: 9px; padding: .8rem 1rem; cursor: pointer; user-select: none; transition: background .15s; }
+.block-hdr:hover { background: var(--bg3); }
+.block-icon { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+.block-body { border-top: 0.5px solid var(--border); display: none; }
+.block-body.open { display: block; }
+.block-actions { display: flex; gap: 5px; padding: .55rem 1rem; background: var(--bg3); flex-wrap: wrap; }
+.chev { font-size: 14px; color: var(--text3); transition: transform .2s; }
+.chev.open { transform: rotate(180deg); }
+
+/* Equity summary strip */
+.eq-strip { padding: .65rem 1rem; background: var(--bg3); display: flex; gap: .75rem; align-items: center; flex-wrap: wrap; border-bottom: 0.5px solid var(--border); }
+.eq-stat .eq-label { font-size: 10px; color: var(--text2); text-transform: uppercase; letter-spacing: .04em; }
+.eq-stat .eq-val { font-size: 14px; font-weight: 600; }
+.eq-divider { width: 0.5px; height: 28px; background: var(--border2); flex-shrink: 0; }
+
+/* Leverage pill */
+.lev-pill { font-size: 11px; padding: 3px 9px; border-radius: 12px; font-weight: 600; }
+.lev-low { background: var(--green-light); color: var(--green); }
+.lev-mid { background: var(--amber-light); color: var(--amber); }
+.lev-high { background: var(--red-light); color: var(--red); }
+
+/* Car events */
+.event-date { font-size: 11px; padding: 2px 7px; border-radius: 5px; min-width: 80px; text-align: center; flex-shrink: 0; }
+.due-r { background: var(--red-light); color: var(--red); }
+.due-am { background: var(--amber-light); color: var(--amber); }
+.due-g { background: var(--green-light); color: var(--green); }
+
+/* Alert rows */
+.alert-row { display: flex; align-items: center; gap: 9px; padding: 8px 0; border-bottom: 0.5px solid var(--border); }
+.alert-row:last-child { border-bottom: none; }
+.alert-urgent { border-right: 3px solid var(--red-mid); padding-right: 8px; }
+.alert-soon { border-right: 3px solid #BA7517; padding-right: 8px; }
+
+/* Checklist */
+.check-row { display: flex; align-items: center; gap: 9px; padding: 7px 0; border-bottom: 0.5px solid var(--border); }
+.check-row:last-child { border-bottom: none; }
+.check-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--green); flex-shrink: 0; cursor: pointer; }
+.check-text { font-size: 13px; flex: 1; }
+.check-text.done { text-decoration: line-through; color: var(--text3); }
+
+/* Prop grid */
+.prop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-bottom: .85rem; padding: .85rem 1rem; }
+.prop-stat { background: var(--bg3); border-radius: var(--radius); padding: .6rem .75rem; }
+.ps-l { font-size: 11px; color: var(--text2); margin-bottom: 2px; }
+.ps-v { font-size: 14px; font-weight: 600; }
+.ps-v.g { color: var(--green); } .ps-v.r { color: var(--red); } .ps-v.b { color: var(--blue); }
+
+/* Stocks */
+.stk-sym { font-size: 13px; font-weight: 600; min-width: 55px; }
+.stk-nm { font-size: 12px; color: var(--text2); flex: 1; }
+.stk-chg { font-size: 11px; padding: 2px 5px; border-radius: 4px; }
+.stk-up { background: var(--green-light); color: var(--green); }
+.stk-dn { background: var(--red-light); color: var(--red); }
+.ld { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--blue); animation: pu 1s infinite; }
+@keyframes pu { 0%,100%{opacity:.3}50%{opacity:1} }
+
+/* Loading overlay */
+.loading { display: flex; align-items: center; justify-content: center; padding: 3rem; color: var(--text2); font-size: 13px; gap: 8px; }
+.spinner { width: 18px; height: 18px; border: 2px solid var(--border2); border-top-color: var(--green); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Two col */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+@media (max-width: 540px) { .two { grid-template-columns: 1fr; } }
+
+/* Empty */
+.empty { font-size: 12px; color: var(--text3); padding: 6px 0; }
+
+/* Modal */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 500; align-items: center; justify-content: center; padding: 1rem; }
+.modal-overlay.open { display: flex; }
+.modal { background: var(--bg2); border-radius: var(--radius-lg); padding: 1.3rem; width: 360px; max-width: 100%; border: 0.5px solid var(--border); max-height: 90vh; overflow-y: auto; }
+.modal h3 { font-size: 15px; font-weight: 600; margin-bottom: .9rem; }
+.fg { margin-bottom: .75rem; }
+.fg label { font-size: 12px; color: var(--text2); display: block; margin-bottom: 3px; }
+.fg input, .fg select { width: 100%; padding: 8px 10px; border-radius: var(--radius); border: 0.5px solid var(--border2); font-size: 13px; font-family: var(--font); background: var(--bg2); color: var(--text); direction: rtl; }
+.fg input:focus, .fg select:focus { outline: 2px solid var(--green); outline-offset: -1px; }
+.modal-sec { font-size: 11px; font-weight: 600; color: var(--text2); margin: .85rem 0 .4rem; padding-bottom: 3px; border-bottom: 0.5px solid var(--border); text-transform: uppercase; letter-spacing: .04em; }
+.modal-actions { display: flex; gap: 7px; justify-content: flex-end; margin-top: .9rem; }
+.hint { font-size: 11px; color: var(--text3); margin-top: 3px; }
+
+/* Toast */
+.toast { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: #1a1a1a; color: #fff; padding: 8px 18px; border-radius: 20px; font-size: 13px; z-index: 600; opacity: 0; transition: opacity .3s; pointer-events: none; }
+.toast.show { opacity: 1; }
+
+/* Config screen */
+.config-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
+.config-box { background: var(--bg2); border-radius: var(--radius-lg); padding: 2rem; max-width: 400px; width: 100%; border: 0.5px solid var(--border); }
+.config-box h2 { font-size: 20px; margin-bottom: .5rem; }
+.config-box p { font-size: 13px; color: var(--text2); margin-bottom: 1.5rem; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<!-- Config screen (shown before setup) -->
+<div id="config-screen" class="config-screen" style="display:none">
+  <div class="config-box">
+    <div style="font-size:28px;margin-bottom:.5rem">🏠</div>
+    <h2>ביתשלנו — הגדרה</h2>
+    <p>הכנס את פרטי ה-Supabase שלך כדי להתחיל. תמצא אותם ב: Project Settings → API</p>
+    <div class="fg"><label>Supabase URL</label><input id="cfg-url" placeholder="https://xxxx.supabase.co" dir="ltr"></div>
+    <div class="fg"><label>Anon Key</label><input id="cfg-key" placeholder="eyJhbGci..." dir="ltr" type="password"></div>
+    <button class="btn primary" style="width:100%;justify-content:center;margin-top:.5rem" onclick="saveConfig()">התחבר</button>
+  </div>
+</div>
+
+<!-- Main app -->
+<div id="main-app" style="display:none">
+<div class="app">
+<div class="topbar">
+  <div class="logo">בית<span>שלנו</span></div>
+  <div style="display:flex;align-items:center;gap:8px">
+    <span id="sync-indicator" style="font-size:11px;color:var(--text3)"></span>
+    <button class="btn sm" onclick="refreshStocks()" title="עדכן מניות">⟳ מניות</button>
+  </div>
+</div>
+
+<!-- Pages -->
+<div id="page-overview" class="page active">
+  <div id="ov-summary" class="mrow"></div>
+  <div class="two">
+    <div>
+      <div class="sec">התראות</div>
+      <div class="card" id="ov-alerts"></div>
+    </div>
+    <div>
+      <div class="sec">תזרים חודשי</div>
+      <div class="card" id="ov-cf"></div>
+    </div>
+  </div>
+</div>
+
+<div id="page-finance" class="page">
+  <div id="fin-summary" class="mrow"></div>
+  <div class="two">
+    <div>
+      <div class="sec">הלוואות</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">הלוואות</span><button class="btn sm" onclick="om('loan')">+ הוסף</button></div>
+        <div id="loans-list"></div>
+      </div>
+    </div>
+    <div>
+      <div class="sec">כרטיסי אשראי</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">כרטיסים</span><button class="btn sm" onclick="om('cc')">+ הוסף</button></div>
+        <div id="cc-list"></div>
+      </div>
+    </div>
+  </div>
+  <div class="sec">תזרים</div>
+  <div class="card">
+    <div class="card-header"><span class="card-title">הכנסות / הוצאות</span><button class="btn sm" onclick="om('cf')">+ הוסף</button></div>
+    <div id="cf-bar"></div>
+    <div id="cf-list"></div>
+  </div>
+</div>
+
+<div id="page-savings" class="page">
+  <div id="sav-summary" class="mrow"></div>
+  <div style="margin-bottom:.85rem">
+    <button class="btn" onclick="om('scat')">+ קטגוריה</button>
+  </div>
+  <div id="cats-list"></div>
+</div>
+
+<div id="page-realestate" class="page">
+  <div id="re-summary" class="mrow"></div>
+  <div style="margin-bottom:.85rem">
+    <button class="btn primary" onclick="om('prop')">+ הוסף נכס</button>
+  </div>
+  <div id="props-list"></div>
+</div>
+
+<div id="page-cars" class="page">
+  <div id="cars-summary" class="mrow"></div>
+  <div style="margin-bottom:.85rem">
+    <button class="btn primary" onclick="om('car')">+ הוסף רכב</button>
+  </div>
+  <div id="cars-list"></div>
+</div>
+
+<div id="page-daily" class="page">
+  <div class="two">
+    <div>
+      <div class="sec">קניות</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">רשימת סופר</span><button class="btn sm" onclick="om('shop')">+</button></div>
+        <div id="shop-list"></div>
+      </div>
+      <div class="sec">חוגים</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">חוגים</span><button class="btn sm" onclick="om('act')">+</button></div>
+        <div id="act-list"></div>
+      </div>
+    </div>
+    <div>
+      <div class="sec">משימות</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">מטלות</span><button class="btn sm" onclick="om('task')">+</button></div>
+        <div id="tasks-list"></div>
+      </div>
+      <div class="sec">תזכורות</div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">תזכורות</span><button class="btn sm" onclick="om('rem')">+</button></div>
+        <div id="rem-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="page-alerts" class="page">
+  <div class="sec">התראות עדכון</div>
+  <div class="card">
+    <div class="card-header"><span class="card-title">התראות מוגדרות</span><button class="btn sm" onclick="om('alert')">+ הוסף</button></div>
+    <div id="alert-defs-list"></div>
+  </div>
+  <div class="sec">שיתוף</div>
+  <div class="card">
+    <p style="font-size:13px;color:var(--text2);margin-bottom:.75rem">שלח סיכום לוואטסאפ</p>
+    <button class="btn primary" onclick="shareWA()">📲 שתף בוואטסאפ</button>
+  </div>
+</div>
+
+<!-- Bottom Nav -->
+<nav class="bottom-nav">
+  <button class="nav-item active" onclick="goTo('overview',this)" data-page="overview">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+    סקירה
+  </button>
+  <button class="nav-item" onclick="goTo('finance',this)" data-page="finance">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 16V8m4 8V4m4 12V10"/></svg>
+    תזרים
+  </button>
+  <button class="nav-item" onclick="goTo('savings',this)" data-page="savings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+    חסכונות
+  </button>
+  <button class="nav-item" onclick="goTo('realestate',this)" data-page="realestate">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/></svg>
+    נדל"ן
+  </button>
+  <button class="nav-item" onclick="goTo('cars',this)" data-page="cars">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 17H3v-5l2-5h14l2 5v5h-2M5 17h14M7 17v2M17 17v2"/><circle cx="7.5" cy="14.5" r="1.5"/><circle cx="16.5" cy="14.5" r="1.5"/></svg>
+    רכבים
+  </button>
+  <button class="nav-item" onclick="goTo('daily',this)" data-page="daily">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+    יומיומי
+  </button>
+  <button class="nav-item" onclick="goTo('alerts',this)" data-page="alerts" id="alerts-nav-btn">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+    <span id="alerts-nav-badge" class="nav-badge" style="display:none"></span>
+    התראות
+  </button>
+</nav>
+</div>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="modal-overlay">
+  <div class="modal">
+    <h3 id="modal-title"></h3>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeModal()">ביטול</button>
+      <button class="btn primary" onclick="saveModal()">שמור</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "ביתשלנו",
+  "short_name": "ביתשלנו",
+  "description": "ניהול פיננסי משפחתי",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F5F5F3",
+  "theme_color": "#0F6E56",
+  "dir": "rtl",
+  "lang": "he",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
