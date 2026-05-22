@@ -355,8 +355,8 @@ function updateSharedViewUi() {
   const note = document.getElementById('ov-shared-note');
   if (note) {
     note.innerHTML = ref
-      ? `נתונים ותצוגה משותפים (פרויקט <span dir="ltr">${ref}</span>). מה שמסתיר/מוסיף אחד — השני רואה אחרי רענון.`
-      : 'הגדרות תצוגה נשמרות בענן לכל המשפחה.';
+      ? `👥 <strong>משותף</strong> — אותם נתונים לשניכם (פרויקט <span dir="ltr">${ref}</span>). לחץ ⟳ רענן אחרי שינוי של בן/בת הזוג.`
+      : '👥 נתונים ותצוגה משותפים לכל המשפחה.';
   }
 }
 
@@ -613,6 +613,10 @@ function setSyncStatus(txt) {
 // ── Navigation ────────────────────────────────────────────
 let navBusy = false;
 
+function setPageLoading(on) {
+  document.documentElement.classList.toggle('page-loading', !!on);
+}
+
 function goTo(page, btn) {
   if (navBusy) return;
   if (!isPageVisible(page)) {
@@ -626,8 +630,33 @@ function goTo(page, btn) {
   if (btn) btn.classList.add('active');
   document.getElementById('app-content')?.scrollTo({ top: 0, behavior: 'instant' });
   navBusy = true;
-  Promise.resolve(renderPage(page)).finally(() => { navBusy = false; });
+  setPageLoading(true);
+  Promise.resolve(renderPage(page))
+    .finally(() => {
+      navBusy = false;
+      setPageLoading(false);
+    });
 }
+
+async function refreshCurrentPage() {
+  if (!sb || navBusy || isLoggingOut) return;
+  setSyncStatus('מעדכן…');
+  setPageLoading(true);
+  try {
+    const page = document.querySelector('.page.active')?.id?.replace('page-', '') || 'overview';
+    await renderPage(page);
+    if (page !== 'overview') await renderOverview();
+    setSyncStatus('✓');
+    toast('הנתונים עודכנו');
+  } catch (e) {
+    console.error('refreshCurrentPage', e);
+    setSyncStatus('שגיאה');
+    toast('שגיאה ברענון');
+  } finally {
+    setPageLoading(false);
+  }
+}
+window.refreshCurrentPage = refreshCurrentPage;
 
 async function renderPage(page) {
   if (page === 'overview') { await renderOverview(); }
@@ -648,6 +677,19 @@ const fmt = n => Number(n || 0).toLocaleString('he-IL', { maximumFractionDigits:
 const fmtU = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const gv = id => { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
 const el = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
+
+function emptyState(emoji, title, subtitle) {
+  return `<div class="empty-state">
+    <span class="empty-ico">${emoji}</span>
+    <div class="empty-title">${title}</div>
+    ${subtitle ? `<div class="empty-sub">${subtitle}</div>` : ''}
+  </div>`;
+}
+
+function getHebrewMonthYearLabel() {
+  const { year, month } = getIsraelYearMonth();
+  return `${MONTH_NAMES_HE[month]} ${year}`;
+}
 
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -921,13 +963,33 @@ async function renderOverview() {
 
   const fixedExp = cf.filter(c => c.type === 'expense' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const varExp = cf.filter(c => c.type === 'expense' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
+  const monthLabel = getHebrewMonthYearLabel();
+
+  el('ov-hero', `
+    <div class="hero-label">תזרים נטו · ${monthLabel}</div>
+    <div class="hero-value ${cfNet >= 0 ? 'g' : 'r'}">₪${fmt(cfNet)}</div>
+    <div class="hero-sub">
+      <span>הכנסות ₪${fmt(income)}</span>
+      <span>הוצאות ₪${fmt(expenses)}</span>
+    </div>
+  `);
 
   el('ov-summary', `
-    <div class="met ov-hero"><div class="ml">תזרים נטו החודש</div><div class="mv ${cfNet >= 0 ? 'g' : 'r'}">₪${fmt(cfNet)}</div></div>
     <div class="met"><div class="ml">הכנסות</div><div class="mv g">₪${fmt(income)}</div></div>
     <div class="met"><div class="ml">הוצאות</div><div class="mv r">₪${fmt(expenses)}</div></div>
-    <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv">₪${fmt(fixedExp)}</div><div class="ms">משתנות ₪${fmt(varExp)}</div></div>
+    <div class="met"><div class="ml">הוצאות קבועות</div><div class="mv">₪${fmt(fixedExp)}</div></div>
+    <div class="met"><div class="ml">הוצאות משתנות</div><div class="mv">₪${fmt(varExp)}</div></div>
   `);
+
+  el('ov-quick', `
+    <button type="button" class="quick-chip primary-chip" onclick="goTo('finance', document.querySelector('.nav-item[data-page=finance]'))">💰 תזרים ועדכון סכומים</button>
+    <button type="button" class="quick-chip" onclick="closeCashflowMonth()">📅 סגור חודש</button>
+    <button type="button" class="quick-chip" onclick="goTo('alerts', document.querySelector('.nav-item[data-page=alerts]'))">🔔 התראות</button>
+    <button type="button" class="quick-chip" onclick="goTo('daily', document.querySelector('.nav-item[data-page=daily]'))">✓ יומיומי</button>
+  `);
+
+  const cfTitle = document.getElementById('ov-cf-title');
+  if (cfTitle) cfTitle.textContent = `תזרים · ${monthLabel}`;
 
   el('ov-details', `
     <div class="met"><div class="ml">שווי נטו</div><div class="mv g">₪${fmt(netWorth)}</div></div>
@@ -948,7 +1010,7 @@ async function renderOverview() {
           <div class="row-name">${carEventLabel(ev, car)}</div>
           <div class="row-meta">${dueLabel(days)} · ${ev.event_date}${ev.note ? ' · ' + ev.note : ''}</div>
         </div>
-        <button type="button" class="btn sm" onclick="completeCarEvent('${ev.id}')">✓ בוצע</button>
+        <button type="button" class="btn sm btn-done" onclick="completeCarEvent('${ev.id}')">✓ בוצע</button>
       </div>`;
     }),
     ...overdueAlerts.map(a => {
@@ -956,13 +1018,15 @@ async function renderOverview() {
       return `<div class="alert-row alert-urgent">
         <span>🔔</span>
         <div style="flex:1"><div class="row-name">${a.name}</div><div class="row-meta">${dueLabel(days)}</div></div>
-        <button type="button" class="btn sm" onclick="markDone('${a.id}','${a.freq}','${a.next_date}')">✓ בוצע</button>
+        <button type="button" class="btn sm btn-done" onclick="markDone('${a.id}','${a.freq}','${a.next_date}')">✓ בוצע</button>
       </div>`;
     })
   ];
-  el('ov-alerts', alertRows.length
+  const urgentCount = alertRows.length;
+  el('ov-urgent-count', urgentCount ? `<span class="sec-badge">${urgentCount}</span>` : '');
+  el('ov-alerts', urgentCount
     ? alertRows.join('')
-    : '<div class="empty">אין דברים באיחור 🎉</div>');
+    : emptyState('✨', 'הכל מעודכן', 'אין דברים באיחור — מעולה!'));
 
   const tot = income + expenses || 1;
   const ip = Math.round(income / tot * 100);
@@ -1000,17 +1064,21 @@ function updateAlertBadge(count) {
 function renderCashflowRow(c) {
   const fixed = isCfFixed(c);
   const amtClass = c.type === 'income' ? 'g' : 'r';
-  return `<div class="row">
-      <span class="row-name">${c.name}</span>
-      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
-        <span class="badge ${c.type === 'income' ? 'g' : 'r'}">${c.type === 'income' ? 'הכנסה' : 'הוצאה'}</span>
-        <span class="badge ${fixed ? 'b' : 'gy'}">${fixed ? 'קבועה' : 'משתנה'}</span>
+  return `<div class="cf-row">
+      <div class="cf-row-main">
+        <span class="row-name">${c.name}</span>
+        <div class="cf-badges">
+          <span class="badge ${c.type === 'income' ? 'g' : 'r'}">${c.type === 'income' ? 'הכנסה' : 'הוצאה'}</span>
+          <span class="badge ${fixed ? 'b' : 'gy'}">${fixed ? 'קבועה' : 'משתנה'}</span>
+        </div>
+      </div>
+      <div class="cf-row-actions">
         <input type="number" class="cf-inline-amt ${amtClass}" value="${Number(c.amount)}" inputmode="decimal"
           aria-label="סכום ${c.name}"
           onblur="saveCfAmount('${c.id}', this.value)"
           onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
         <button type="button" class="btn sm" onclick="toggleCfFixed('${c.id}',${fixed ? 'false' : 'true'})" title="החלף קבועה/משתנה">${fixed ? '↔ משתנה' : '↔ קבועה'}</button>
-        <button class="btn icon-only" onclick="del('cashflow','${c.id}',true)">🗑</button>
+        <button class="btn icon-only" onclick="del('cashflow','${c.id}',true)" aria-label="מחק">🗑</button>
       </div>
     </div>`;
 }
@@ -1034,7 +1102,9 @@ async function saveCfAmount(id, val) {
 window.saveCfAmount = saveCfAmount;
 
 function renderCashflowListHtml(cf) {
-  if (!cf.length) return '<div class="empty">הוסף הכנסה או הוצאה — קבועה נשארת כל חודש</div>';
+  if (!cf.length) {
+    return emptyState('💰', 'אין עדיין פריטי תזרים', 'הוסף קבועה (משכורת, ביטוח) או משתנה (מכולת)');
+  }
   const blocks = [
     { title: 'הכנסות קבועות', items: cf.filter(c => c.type === 'income' && isCfFixed(c)) },
     { title: 'הכנסות משתנות', items: cf.filter(c => c.type === 'income' && !isCfFixed(c)) },
@@ -1383,7 +1453,7 @@ async function renderAlerts() {
         <div class="row-meta">${freqL[a.freq] || a.freq} · ${catL[a.category] || a.category} · ${a.next_date}</div></div>
       <div style="display:flex;align-items:center;gap:5px">
         <span class="badge ${days < 0 ? 'r' : days <= 7 ? 'am' : 'g'}">${days < 0 ? 'באיחור' : days <= 7 ? 'בקרוב' : 'פעיל'}</span>
-        <button class="btn sm" onclick="markDone('${a.id}','${a.freq}','${a.next_date}')">✓</button>
+        <button class="btn sm btn-done" onclick="markDone('${a.id}','${a.freq}','${a.next_date}')">✓ בוצע</button>
         <button class="btn icon-only" onclick="del('alert_defs','${a.id}',true)">🗑</button>
       </div></div>`;
   }).join('') || '<div class="empty">אין</div>');
