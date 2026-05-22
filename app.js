@@ -4,6 +4,7 @@ let sb = null;
 let stockPrices = {};
 let openBlocks = {};
 let modalType = '', modalTarget = null;
+let isLoggingOut = false;
 
 const DEFAULT_AUTH_DOMAIN = 'bayit.local';
 
@@ -103,10 +104,29 @@ async function doLogin() {
   await init();
 }
 
-async function doLogout() {
-  if (sb) await sb.auth.signOut();
-  showLogin();
+async function doLogout(loginMsg) {
+  if (isLoggingOut) return;
+  isLoggingOut = true;
+  try {
+    const userLabel = document.getElementById('user-label');
+    if (userLabel) userLabel.textContent = '';
+    const passEl = document.getElementById('login-pass');
+    if (passEl) passEl.value = '';
+    showLogin(loginMsg || '');
+
+    if (sb) {
+      const { error } = await sb.auth.signOut();
+      if (error) console.error('signOut', error);
+    }
+    if (!loginMsg) toast('יצאת בהצלחה');
+  } catch (e) {
+    console.error('doLogout', e);
+    showLogin('שגיאה ביציאה — רענן את הדף');
+  } finally {
+    isLoggingOut = false;
+  }
 }
+window.doLogout = doLogout;
 
 // ── Config ────────────────────────────────────────────────
 async function boot() {
@@ -115,9 +135,11 @@ async function boot() {
     return;
   }
 
-  sb.auth.onAuthStateChange((_event, session) => {
-    if (!session && document.getElementById('main-app').style.display !== 'none') {
-      showLogin();
+  sb.auth.onAuthStateChange((event, session) => {
+    if (isLoggingOut) return;
+    if (event === 'SIGNED_OUT' || !session) {
+      const main = document.getElementById('main-app');
+      if (main && main.style.display !== 'none') showLogin();
     }
   });
 
@@ -207,9 +229,8 @@ async function fetch_(table, order = 'created_at') {
   const { data, error } = await sb.from(table).select('*').order(order);
   if (error) {
     console.error(table, error);
-    if (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('row-level')) {
-      await doLogout();
-      showLogin('התחברות פגה — התחבר שוב');
+    if (!isLoggingOut && (error.code === 'PGRST301' || error.message?.includes('JWT') || error.message?.includes('row-level'))) {
+      await doLogout('התחברות פגה — התחבר שוב');
     }
     return [];
   }
@@ -823,6 +844,11 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById(id)?.addEventListener('keydown', e => {
       if (e.key === 'Enter') doLogin();
     });
+  });
+  document.getElementById('btn-logout')?.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    doLogout();
   });
 });
 
