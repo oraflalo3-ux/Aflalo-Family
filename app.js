@@ -658,9 +658,25 @@ function toast(msg) {
 
 function getDueDays(dateStr) {
   if (!dateStr) return 9999;
-  const d = new Date(dateStr);
-  if (isNaN(d)) return 9999;
-  return Math.ceil((d - new Date()) / (1000 * 60 * 60 * 24));
+  const d = new Date(dateStr + 'T12:00:00');
+  if (isNaN(d.getTime())) return 9999;
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  return Math.ceil((d - today) / (1000 * 60 * 60 * 24));
+}
+
+/** אחרי "בוצע" — קדם את next_date עד שההתראה לא באיחור */
+function advanceAlertNextDate(freq, nextDate) {
+  const freqDays = { daily: 1, weekly: 7, monthly: 30, quarterly: 90, yearly: 365 };
+  const step = freqDays[freq] || 30;
+  let d = new Date((nextDate || '') + 'T12:00:00');
+  if (isNaN(d.getTime())) d = new Date();
+  d.setHours(12, 0, 0, 0);
+  const maxLoops = 400;
+  for (let i = 0; i < maxLoops && getDueDays(d.toISOString().split('T')[0]) < 0; i++) {
+    d.setDate(d.getDate() + step);
+  }
+  return d.toISOString().split('T')[0];
 }
 function dueCls(days) { return days < 0 ? 'due-r' : days <= 30 ? 'due-am' : 'due-g'; }
 function dueLabel(days) {
@@ -1374,18 +1390,31 @@ async function renderAlerts() {
 }
 
 async function markDone(id, freq, nextDate) {
-  const freqDays = { daily: 1, weekly: 7, monthly: 30, quarterly: 90, yearly: 365 };
-  const next = new Date(nextDate);
-  next.setDate(next.getDate() + (freqDays[freq] || 30));
-  const nextStr = next.toISOString().split('T')[0];
-  const { data: def } = await sb.from('alert_defs').select('name').eq('id', id).single();
-  await Promise.all([
-    sb.from('alert_defs').update({ next_date: nextStr }).eq('id', id),
-    sb.from('alert_history').insert({ name: def?.name || '', done_at: new Date().toISOString() })
-  ]);
-  toast('✓ עודכן');
-  renderAlerts();
+  if (!sb) { toast('לא מחובר'); return; }
+  const nextStr = advanceAlertNextDate(freq, nextDate);
+  const { data: def, error: fetchErr } = await sb.from('alert_defs').select('name').eq('id', id).single();
+  if (fetchErr) {
+    toast('שגיאה בטעינת התראה');
+    console.error('markDone fetch', fetchErr);
+    return;
+  }
+  const { error: updErr } = await sb.from('alert_defs').update({ next_date: nextStr }).eq('id', id);
+  if (updErr) {
+    toast('שגיאה בעדכון');
+    console.error('markDone update', updErr);
+    return;
+  }
+  const { error: histErr } = await sb.from('alert_history').insert({
+    name: def?.name || '',
+    done_at: new Date().toISOString()
+  });
+  if (histErr) console.warn('markDone history', histErr);
+  toast('✓ בוצע — הוסר מ"לטפל עכשיו"');
+  await renderOverview();
+  const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+  if (page === 'alerts') await renderAlerts();
 }
+window.markDone = markDone;
 
 // ── Toggle / CRUD ─────────────────────────────────────────
 function toggleBlock(key, elId) {
