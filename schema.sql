@@ -205,6 +205,7 @@ create table tasks (
   id uuid primary key default gen_random_uuid(),
   text text not null,
   who text default 'שניהם',
+  due_date text not null default '',
   done boolean default false,
   created_at timestamptz default now()
 );

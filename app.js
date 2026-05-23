@@ -783,6 +783,25 @@ function toast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
+function formatDueDateLabel(raw) {
+  const s = (raw || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-');
+    return `${d}.${m}.${y.length > 2 ? y.slice(-2) : y}`;
+  }
+  return s;
+}
+
+function taskDueDateClass(raw) {
+  const s = (raw || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+  const days = getDueDays(s);
+  if (days < 0) return 'due-r';
+  if (days <= 3) return 'due-am';
+  return 'due-g';
+}
+
 function getDueDays(dateStr) {
   if (!dateStr) return 9999;
   const d = new Date(dateStr + 'T12:00:00');
@@ -2642,13 +2661,20 @@ async function renderDaily() {
         <button class="btn icon-only" onclick="del('activities','${a.id}',true)">🗑</button></div>
     </div>`).join('') || '<div class="empty">אין</div>');
 
-  el('tasks-list', tasks.map(t => `
-    <div class="check-row">
+  el('tasks-list', tasks.map(t => {
+    const dueLbl = formatDueDateLabel(t.due_date);
+    const dueCls = taskDueDateClass(t.due_date);
+    const dueBadge = dueLbl
+      ? `<span class="event-date ${dueCls}" style="min-width:58px">${escHtml(dueLbl)}</span>`
+      : '';
+    return `<div class="check-row">
       <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleDone('tasks','${t.id}',this.checked)">
-      <span class="check-text ${t.done ? 'done' : ''}">${t.text}</span>
-      <span class="badge gy">${t.who}</span>
+      ${dueBadge}
+      <span class="check-text ${t.done ? 'done' : ''}">${escHtml(t.text)}</span>
+      <span class="badge gy">${escHtml(t.who || '')}</span>
       <button class="btn icon-only" onclick="del('tasks','${t.id}',true)">🗑</button>
-    </div>`).join('') || '<div class="empty">אין</div>');
+    </div>`;
+  }).join('') || '<div class="empty">אין</div>');
 
   el('rem-list', reminders.map(r => `
     <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:0.5px solid var(--border)">
@@ -2988,7 +3014,8 @@ const forms = {
     <div class="fg"><label>יום ושעה</label><input id="f3" placeholder="שלישי 17:00"></div>
     <div class="fg"><label>עלות חודשית (₪)</label><input id="f4" type="number" placeholder="0"></div>`,
   task: `<div class="fg"><label>משימה</label><input id="f1" placeholder="מה צריך?"></div>
-    <div class="fg"><label>אחראי</label><select id="f2"><option>שניהם</option><option>אמא</option><option>אבא</option></select></div>`,
+    <div class="fg"><label>אחראי</label><select id="f2"><option>שניהם</option><option>אור</option><option>אמא</option><option>אבא</option></select></div>
+    <div class="fg"><label>עד תאריך</label><input id="f3" type="date"></div>`,
   rem: `<div class="fg"><label>תזכורת</label><input id="f1" placeholder="מה לזכור?"></div>
     <div class="fg"><label>תאריך</label><input id="f2" placeholder="1 לחודש..."></div>
     <div class="fg"><label>של מי</label><select id="f3"><option>שניהם</option><option>אמא</option><option>אבא</option></select></div>`,
@@ -3341,7 +3368,15 @@ async function saveModal() {
       }
     }
     else if (t === 'act') await sb.from('activities').insert({ name: gv('f1'), child: gv('f2'), day: gv('f3'), cost: +gv('f4') || 0 });
-    else if (t === 'task') await sb.from('tasks').insert({ text: gv('f1'), who: gv('f2') || 'שניהם' });
+    else if (t === 'task') {
+      const row = { text: gv('f1'), who: gv('f2') || 'שניהם', due_date: gv('f3') || '' };
+      let { error } = await sb.from('tasks').insert(row);
+      if (error && /due_date|column/i.test(error.message || '')) {
+        ({ error } = await sb.from('tasks').insert({ text: row.text, who: row.who }));
+        if (!error) toast('הרץ tasks-due-date-migration.sql ב-Supabase');
+      }
+      if (error) throw error;
+    }
     else if (t === 'rem') await sb.from('reminders').insert({ text: gv('f1'), reminder_date: gv('f2'), who: gv('f3') || 'שניהם' });
     else if (t === 'alert') await sb.from('alert_defs').insert({ name: gv('f1'), category: gv('f2'), freq: gv('f3'), next_date: gv('f4') || new Date().toISOString().split('T')[0] });
     else if (t === 'display') {
