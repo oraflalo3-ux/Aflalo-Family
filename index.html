@@ -371,6 +371,15 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .shop-done-collapsed summary { font-size: 11px; color: var(--text2); cursor: pointer; padding: 4px 0; }
 .shop-tag-extra { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 1px 5px; border-radius: 4px; flex-shrink: 0; }
 .check-row.shop-row { padding: 5px 0; gap: 7px; }
+.shop-list-row {
+  width: 100%; border: none; background: transparent; cursor: pointer;
+  text-align: inherit; font: inherit; color: inherit; padding: 10px 0;
+  border-bottom: 0.5px solid var(--border);
+}
+.shop-list-row:last-child { border-bottom: none; }
+.shop-list-row:active { background: var(--bg2); }
+.shop-detail-hdr { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shop-detail-hdr .card-title { flex: 1; text-align: center; }
 .check-text { font-size: 13px; flex: 1; }
 .check-text.done { text-decoration: line-through; color: var(--text3); }
 
@@ -721,34 +730,35 @@ html.app-main #config-screen { display: none !important; }
 </div>
 
 <div id="page-daily" class="page">
-  <div class="card shop-card">
-    <div class="card-header">
-      <span class="card-title">🛒 רשימת סופר</span>
-      <span id="shop-live-hint" class="shop-live-hint" hidden>מסתנכרן</span>
-    </div>
-    <div class="shop-block shop-block-trip">
-      <div class="shop-block-hdr">
-        <span class="shop-block-title">🛒 לקנייה עכשיו</span>
-        <div id="shop-trip-actions" class="shop-trip-actions"></div>
+  <div id="shop-lists-view">
+    <div class="card shop-card">
+      <div class="card-header">
+        <span class="card-title">🛒 קניות</span>
+        <span id="shop-live-hint" class="shop-live-hint" hidden>מסתנכרן</span>
+        <button type="button" class="btn sm primary" onclick="om('shop_list')">+ צור רשימה</button>
       </div>
-      <select id="shop-quick-cat" aria-label="קטגוריה" hidden></select>
-      <div id="shop-progress"></div>
-      <div class="shop-extra-add">
-        <input id="shop-quick-name" type="text" placeholder="12 עגבניות / פריט (Enter)" autocomplete="off">
-        <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
-      </div>
-      <div id="shop-list"></div>
+      <div id="shop-lists"></div>
     </div>
-
-    <details id="shop-staples-panel" class="shop-staples-panel">
-      <summary>
-        <span id="shop-staples-summary-text" class="shop-staples-summary-text">📋 הרשימה הקבועה</span>
-        <button type="button" class="btn sm" onclick="event.preventDefault(); event.stopPropagation(); om('staple')">+ הוסף</button>
-      </summary>
-      <div id="shop-staples-list" class="shop-staples-body"></div>
-    </details>
   </div>
 
+  <div id="shop-detail-view" hidden>
+    <div class="card shop-card">
+      <div class="card-header shop-detail-hdr">
+        <button type="button" class="btn sm" onclick="closeShopList()">← חזרה</button>
+        <span id="shop-detail-title" class="card-title"></span>
+        <button type="button" class="btn sm" id="shop-clear-bought-btn" onclick="clearShopBought()">נקה נקנה</button>
+      </div>
+      <div id="shop-detail-progress"></div>
+      <div class="shop-extra-add">
+        <input id="shop-item-quick" type="text" placeholder="12 עגבניות / פריט (Enter)" autocomplete="off">
+        <button type="button" class="btn primary sm" onclick="quickAddShopItem()">+</button>
+      </div>
+      <div style="margin-bottom:.5rem">
+        <button type="button" class="btn sm" onclick="openShopItemModal()">+ הוסף פריט</button>
+      </div>
+      <div id="shop-items-list"></div>
+    </div>
+  </div>
 </div>
 
 <div id="page-alerts" class="page">
@@ -845,16 +855,6 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
-<div id="shop-super" class="shop-super" aria-hidden="true">
-  <header class="shop-super-hdr">
-    <button type="button" class="btn sm shop-super-exit" onclick="closeShopSuperMode()">← יציאה</button>
-    <span class="shop-super-title">🛒 קנייה</span>
-    <span id="shop-super-count" class="shop-super-count"></span>
-  </header>
-  <div id="shop-super-progress" class="shop-super-progress"></div>
-  <div id="shop-super-list" class="shop-super-list"></div>
-  <footer id="shop-super-ftr" class="shop-super-ftr"></footer>
-</div>
 
 <script>
 /* גיבוי ל-Safari באייפון — עובד גם אם app.js לא נטען */
@@ -917,6 +917,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=60"></script>
+<script src="app.js?v=61"></script>
 </body>
 </html>

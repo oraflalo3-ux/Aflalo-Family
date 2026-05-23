@@ -167,7 +167,25 @@ create table car_events (
   created_at timestamptz default now()
 );
 
--- קניות — רשימה לקנייה הנוכחית
+-- קניות — רשימות (סופר, פארם, איקאה…)
+create table shopping_lists (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz default now()
+);
+
+create table shopping_items (
+  id uuid primary key default gen_random_uuid(),
+  list_id uuid not null references shopping_lists(id) on delete cascade,
+  name text not null,
+  qty text default '1',
+  bought boolean default false,
+  created_at timestamptz default now()
+);
+create index shopping_items_list_id_idx on shopping_items (list_id);
+create index shopping_items_list_bought_idx on shopping_items (list_id, bought);
+
+-- קניות — רשימה לקנייה הנוכחית (legacy)
 create table shopping (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -290,6 +308,8 @@ alter table properties enable row level security;
 alter table property_expenses enable row level security;
 alter table cars enable row level security;
 alter table car_events enable row level security;
+alter table shopping_lists enable row level security;
+alter table shopping_items enable row level security;
 alter table shopping enable row level security;
 alter table activities enable row level security;
 alter table tasks enable row level security;
@@ -305,7 +325,7 @@ begin
   foreach t in array array[
     'savings_cats','savings_accounts','savings_stocks','savings_loans',
     'loans','credit_cards','cashflow','cashflow_monthly','properties','property_expenses','asset_expenses',
-    'cars','car_events','car_service_log','shopping','shopping_staples','activities','tasks','reminders',
+    'cars','car_events','car_service_log','shopping_lists','shopping_items','shopping','shopping_staples','activities','tasks','reminders',
     'family_prefs','alert_defs','alert_history'
   ]
   loop
