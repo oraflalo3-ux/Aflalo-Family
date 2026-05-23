@@ -346,30 +346,26 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 
 /* Shopping */
 .shop-card { margin-bottom: 1rem; }
+.shop-block { padding: .85rem 0; border-top: 0.5px solid var(--border); }
+.shop-block:first-of-type { border-top: none; padding-top: 0; }
+.shop-block-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: .35rem; flex-wrap: wrap; }
+.shop-block-title { font-size: 13px; font-weight: 600; }
 .shop-progress { margin-bottom: .75rem; }
 .shop-progress-bar { height: 8px; background: var(--bg3); border-radius: 99px; overflow: hidden; }
 .shop-progress-fill { height: 100%; background: var(--green-mid); border-radius: 99px; transition: width .25s ease; }
 .shop-progress-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 5px; }
 .shop-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .65rem; }
-.shop-cat-hdr { font-size: 10px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; padding: 10px 0 4px; border-top: 0.5px solid var(--border); margin-top: 4px; }
-.shop-cat-hdr:first-child { border-top: none; margin-top: 0; padding-top: 0; }
 .shop-row .check-text { flex: 1; min-width: 0; }
-.shop-row .shop-cat-badge { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
-.shop-quick-wrap { margin-bottom: .75rem; }
-.shop-quick { display: flex; gap: 6px; align-items: stretch; }
-.shop-save-staple-lbl { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); margin-top: 6px; cursor: pointer; }
-.shop-save-staple-lbl input { accent-color: var(--green); }
+.shop-extra-add { display: flex; gap: 6px; margin-bottom: .65rem; }
+.shop-extra-add input { flex: 1; min-width: 0; font-size: 14px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 10px 12px; background: var(--bg2); color: var(--text); font-family: var(--font); }
 .shop-live-hint { font-size: 10px; color: var(--green); font-weight: 500; }
 .shop-in-cart { font-size: 10px; color: var(--text3); flex-shrink: 0; }
-.shop-staples-drawer { margin-top: .85rem; border-top: 0.5px solid var(--border); padding-top: .5rem; }
-.shop-staples-drawer summary { font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px 0; }
-.shop-staples-hint { margin: 4px 0 .65rem; font-size: 11px; }
-.shop-staple-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
+.shop-staple-row { display: flex; align-items: center; gap: 6px; padding: 7px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
 .shop-staple-row:last-child { border-bottom: none; }
-.shop-quick select { flex: 0 0 7.5rem; font-size: 12px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 8px; background: var(--bg2); color: var(--text); font-family: var(--font); }
-.shop-quick input { flex: 1; min-width: 0; font-size: 14px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 10px 12px; background: var(--bg2); color: var(--text); font-family: var(--font); }
 .shop-done-collapsed { margin-top: .5rem; }
 .shop-done-collapsed summary { font-size: 12px; color: var(--text2); cursor: pointer; padding: 6px 0; }
+.shop-tag-staple { font-size: 10px; color: var(--blue); background: var(--blue-light); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+.shop-tag-extra { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
 .check-text { font-size: 13px; flex: 1; }
 .check-text.done { text-decoration: line-through; color: var(--text3); }
 
@@ -645,23 +641,29 @@ html.app-main #config-screen { display: none !important; }
       <span class="card-title">🛒 רשימת סופר</span>
       <span id="shop-live-hint" class="shop-live-hint" hidden>מסתנכרן</span>
     </div>
-    <div id="shop-quick" class="shop-quick-wrap">
-      <div class="shop-quick">
-        <select id="shop-quick-cat" aria-label="קטגוריה"></select>
-        <input id="shop-quick-name" type="text" placeholder="הוסף פריט ולחץ Enter" autocomplete="off">
+    <div class="shop-block shop-block-staples">
+      <div class="shop-block-hdr">
+        <span class="shop-block-title">📋 הרשימה הקבועה</span>
+        <button type="button" class="btn sm" onclick="om('staple')">+ הוסף</button>
+      </div>
+      <p class="hint" style="margin:0 0 .5rem">פריטים שחוזרים בכל קנייה — עריכה כאן, לא ברשימת הקנייה</p>
+      <div id="shop-staples-list"></div>
+    </div>
+
+    <div class="shop-block shop-block-trip">
+      <div class="shop-block-hdr">
+        <span class="shop-block-title">🛒 לקנייה עכשיו</span>
+        <button type="button" class="btn sm primary" onclick="prepareShopTrip()">טען מקבועה</button>
+      </div>
+      <select id="shop-quick-cat" aria-label="קטגוריה" hidden></select>
+      <div id="shop-progress"></div>
+      <div id="shop-toolbar"></div>
+      <div class="shop-extra-add">
+        <input id="shop-quick-name" type="text" placeholder="הוסף פריט חד-פעמי לקנייה (Enter)" autocomplete="off">
         <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
       </div>
-      <label class="shop-save-staple-lbl"><input type="checkbox" id="shop-save-staple"> שמור ברשימה הקבועה</label>
+      <div id="shop-list"></div>
     </div>
-    <div id="shop-progress"></div>
-    <div id="shop-toolbar"></div>
-    <div id="shop-list"></div>
-    <details class="shop-staples-drawer" id="shop-staples-drawer">
-      <summary id="shop-staples-summary">הרשימה הקבועה</summary>
-      <p class="hint shop-staples-hint">פריטים שחוזרים בכל קנייה. «הכן לקנייה» מעתיק אותם לרשימה למטה.</p>
-      <div id="shop-staples-list"></div>
-      <button type="button" class="btn sm" onclick="om('staple')">+ לרשימה הקבועה</button>
-    </details>
   </div>
   <div class="sec">מ-WhatsApp</div>
   <div class="two">
@@ -820,6 +822,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=50"></script>
+<script src="app.js?v=52"></script>
 </body>
 </html>

@@ -1054,6 +1054,31 @@ function resolveAssetName(assetType, assetId, ctx) {
   return '';
 }
 
+function assetExpenseParentExists(assetType, assetId, ctx) {
+  if (!ctx || !assetId) return false;
+  if (assetType === 'property') return ctx.props?.some(p => p.id === assetId);
+  if (assetType === 'car') return ctx.cars?.some(c => c.id === assetId);
+  if (assetType === 'loan') return ctx.loans?.some(l => l.id === assetId);
+  if (assetType === 'savings_loan') return ctx.savLoans?.some(l => l.id === assetId);
+  if (assetType === 'savings_cat') return ctx.cats?.some(c => c.id === assetId);
+  return true;
+}
+
+async function deleteAssetExpensesForAsset(assetType, assetId) {
+  if (!sb || !assetExpensesTableOk || !assetId) return;
+  const { error } = await sb.from('asset_expenses').delete()
+    .eq('asset_type', assetType).eq('asset_id', assetId);
+  if (error) console.warn('deleteAssetExpensesForAsset', assetType, assetId, error);
+}
+
+const DELETE_ASSET_EXPENSE_MAP = {
+  loans: 'loan',
+  savings_loans: 'savings_loan',
+  properties: 'property',
+  cars: 'car',
+  savings_cats: 'savings_cat'
+};
+
 async function fetchAssetExpenses() {
   if (!sb) return [];
   const { data, error } = await sb.from('asset_expenses').select('*').order('kind').order('name');
@@ -1204,6 +1229,7 @@ function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy
   lines = [];
   (assetExpenses || []).forEach(e => {
     if (e.kind === 'once' && !isInCurrentCashflowMonth(e.expense_date)) return;
+    if (!assetExpenseParentExists(e.asset_type, e.asset_id, ctx)) return;
     const amount = Number(e.amount || 0);
     if (amount <= 0) return;
     const assetName = resolveAssetName(e.asset_type, e.asset_id, ctx);
@@ -2084,15 +2110,19 @@ function shopCatLabel(id) {
   return SHOP_CATS.find(c => c.id === id)?.label || 'אחר';
 }
 
-function sortShoppingItems(items) {
-  const order = Object.fromEntries(SHOP_CATS.map((c, i) => [c.id, i]));
+function sortShopTripItems(items) {
   return [...items].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
-    const ca = order[a.category] ?? 99;
-    const cb = order[b.category] ?? 99;
-    if (ca !== cb) return ca - cb;
     return (a.name || '').localeCompare(b.name || '', 'he');
   });
+}
+
+function shopStapleNamesSet(staples) {
+  return new Set((staples || []).map(s => (s.name || '').trim().toLowerCase()));
+}
+
+function isShopStapleItem(name, stapleNames) {
+  return stapleNames.has((name || '').trim().toLowerCase());
 }
 
 async function getShopAddedBy() {
@@ -2176,8 +2206,7 @@ function buildShopFormHtml() {
   const opts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
   return `<div class="fg"><label>פריט</label><input id="f1" placeholder="חלב, לחם..."></div>
     <div class="fg"><label>כמות</label><input id="f2" placeholder="1"></div>
-    <div class="fg"><label>קטגוריה</label><select id="f3">${opts}</select></div>
-    <label class="shop-save-staple-lbl"><input type="checkbox" id="f_staple"> שמור גם ברשימה הקבועה</label>`;
+    <div class="fg"><label>קטגוריה</label><select id="f3">${opts}</select></div>`;
 }
 
 function buildStapleFormHtml() {
@@ -2187,31 +2216,29 @@ function buildStapleFormHtml() {
     <div class="fg"><label>קטגוריה</label><select id="f3">${opts}</select></div>`;
 }
 
-function renderShopListHtml(items, hideDone) {
-  const sorted = sortShoppingItems(items);
+function renderShopListHtml(items, hideDone, stapleNames) {
+  const sorted = sortShopTripItems(items);
   const active = sorted.filter(s => !s.done);
   const bought = sorted.filter(s => s.done);
   const visible = hideDone ? active : sorted;
 
   if (!items.length) {
-    return '<div class="empty">ריקה — «הכן לקנייה» או הוסיפו פריט למעלה</div>';
+    return '<div class="empty">ריקה — «טען מקבועה» או הוסיפו פריט חד-פעמי</div>';
   }
 
   let html = '';
-  let lastCat = null;
   visible.forEach(s => {
-    const cat = s.category || 'other';
-    if (cat !== lastCat) {
-      html += `<div class="shop-cat-hdr">${escHtml(shopCatLabel(cat))}</div>`;
-      lastCat = cat;
-    }
+    const fromStaple = isShopStapleItem(s.name, stapleNames);
+    const tag = fromStaple
+      ? '<span class="shop-tag-staple">קבוע</span>'
+      : '<span class="shop-tag-extra">חד-פעמי</span>';
     const cartWho = s.done && s.added_by ? `<span class="shop-in-cart">בעגלה · ${escHtml(s.added_by)}</span>` : '';
     html += `<div class="check-row shop-row" data-shop-id="${s.id}">
       <input type="checkbox" ${s.done ? 'checked' : ''} onchange="toggleDone('shopping','${s.id}',this.checked)">
       <span class="check-text ${s.done ? 'done' : ''}">${escHtml(s.name)}</span>
+      ${tag}
       <span class="badge gy">${escHtml(s.qty || '1')}</span>
       ${cartWho}
-      <button class="btn icon-only" type="button" onclick="promoteShopToStaple('${s.id}')" title="הוסף לקבועה">📌</button>
       <button class="btn icon-only" type="button" onclick="del('shopping','${s.id}',true)">🗑</button>
     </div>`;
   });
@@ -2219,10 +2246,15 @@ function renderShopListHtml(items, hideDone) {
   if (hideDone && bought.length) {
     html += `<details class="shop-done-collapsed" open><summary>בעגלה (${bought.length})</summary>`;
     bought.forEach(s => {
+      const fromStaple = isShopStapleItem(s.name, stapleNames);
+      const tag = fromStaple
+        ? '<span class="shop-tag-staple">קבוע</span>'
+        : '<span class="shop-tag-extra">חד-פעמי</span>';
       const cartWho = s.added_by ? `<span class="shop-in-cart">${escHtml(s.added_by)}</span>` : '';
       html += `<div class="check-row shop-row" data-shop-id="${s.id}">
         <input type="checkbox" checked onchange="toggleDone('shopping','${s.id}',false)">
         <span class="check-text done">${escHtml(s.name)}</span>
+        ${tag}
         <span class="badge gy">${escHtml(s.qty || '1')}</span>
         ${cartWho}
         <button class="btn icon-only" type="button" onclick="del('shopping','${s.id}',true)">🗑</button>
@@ -2238,27 +2270,22 @@ function renderStaplesListHtml(staples) {
     return '<p class="hint">הרץ shopping-staples-migration.sql ב-Supabase</p>';
   }
   if (!staples.length) {
-    return '<div class="empty">ריקה — הוסיפו פריטים קבועים</div>';
+    return '<div class="empty">אין פריטים — לחצו + הוסף</div>';
   }
-  const sorted = sortShoppingItems(staples.map(s => ({ ...s, done: false })));
-  let html = '';
-  let lastCat = null;
-  sorted.forEach(s => {
-    const cat = s.category || 'other';
-    if (cat !== lastCat) {
-      html += `<div class="shop-cat-hdr">${escHtml(shopCatLabel(cat))}</div>`;
-      lastCat = cat;
-    }
-    html += `<div class="shop-staple-row">
-      <span style="flex:1">${escHtml(s.name)} <span class="badge gy">${escHtml(s.qty || '1')}</span></span>
+  const sorted = [...staples].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'he'));
+  return sorted.map(s => {
+    const catLbl = s.category && s.category !== 'other' ? `<span class="shop-tag-extra">${escHtml(shopCatLabel(s.category))}</span>` : '';
+    return `<div class="shop-staple-row">
+      <span style="flex:1">${escHtml(s.name)} ${catLbl} <span class="badge gy">${escHtml(s.qty || '1')}</span></span>
+      <button type="button" class="btn sm" onclick="om('staple_edit','${s.id}')" title="עריכה">✏️</button>
       <button class="btn icon-only" type="button" onclick="del('shopping_staples','${s.id}',true)">🗑</button>
     </div>`;
-  });
-  return html;
+  }).join('');
 }
 
 function renderShopSection(shopping, staples) {
   initShopQuickBar();
+  const stapleNames = shopStapleNamesSet(staples);
   const hideDone = getShopHideDone();
   const done = shopping.filter(x => x.done).length;
   const todo = shopping.filter(x => !x.done).length;
@@ -2269,39 +2296,26 @@ function renderShopSection(shopping, staples) {
     <div class="shop-progress">
       <div class="shop-progress-bar"><div class="shop-progress-fill" style="width:${pct}%"></div></div>
       <div class="shop-progress-meta"><span>${done} בעגלה · ${todo} נשאר</span><span>${pct}%</span></div>
-    </div>` : '<p class="hint" style="margin-bottom:.5rem">לחצו «הכן לקנייה» או הוסיפו פריט למעלה</p>');
+    </div>` : '<p class="hint" style="margin-bottom:.5rem">טענו מקבועה או הוסיפו פריט חד-פעמי</p>');
 
-  const prepBtn = shopStaplesAvailable
-    ? `<button type="button" class="btn sm primary" onclick="prepareShopTrip()">הכן לקנייה</button>`
-    : '';
   el('shop-toolbar', `
     <div class="shop-toolbar">
-      ${prepBtn}
       <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג בעגלה' : 'הסתר בעגלה'}</button>
       ${done ? `<button type="button" class="btn sm" onclick="finishShopTrip()">סיימנו קנייה</button>` : ''}
     </div>`);
 
-  el('shop-list', renderShopListHtml(shopping, hideDone));
-
-  const sum = document.getElementById('shop-staples-summary');
-  if (sum) sum.textContent = `הרשימה הקבועה (${staples.length})`;
   el('shop-staples-list', renderStaplesListHtml(staples));
+  el('shop-list', renderShopListHtml(shopping, hideDone, stapleNames));
 }
 
 window.quickAddShop = async function () {
   const name = gv('shop-quick-name');
   if (!name) return;
-  const category = document.getElementById('shop-quick-cat')?.value || 'other';
-  const saveStaple = document.getElementById('shop-save-staple')?.checked;
-  const err = await insertShopRow({ name, qty: '1', category, done: false, added_by: '' });
+  const err = await insertShopRow({ name, qty: '1', category: 'other', done: false, added_by: '' });
   if (err) { toast('שגיאה בהוספה'); console.error(err); return; }
-  if (saveStaple && shopStaplesAvailable) {
-    const se = await insertStapleRow({ name, qty: '1', category });
-    if (se && !/duplicate|unique/i.test(se.message || '')) console.warn('staple', se);
-  }
   const inp = document.getElementById('shop-quick-name');
   if (inp) { inp.value = ''; inp.focus(); }
-  toast('✓ נוסף');
+  toast('✓ נוסף לקנייה');
   await refreshShoppingUI();
 };
 
@@ -2331,18 +2345,8 @@ window.prepareShopTrip = async function () {
   await refreshShoppingUI();
 };
 
-window.promoteShopToStaple = async function (id) {
-  if (!shopStaplesAvailable) { toast('הרץ shopping-staples-migration.sql'); return; }
-  const items = await fetch_('shopping');
-  const item = items.find(i => i.id === id);
-  if (!item) return;
-  const err = await insertStapleRow({ name: item.name, qty: item.qty || '1', category: item.category || 'other' });
-  if (err) {
-    toast(/duplicate|unique/i.test(err.message || '') ? 'כבר ברשימה הקבועה' : 'שגיאה');
-    return;
-  }
-  toast('✓ נשמר בקבועה');
-  await refreshShoppingUI();
+window.promoteShopToStaple = async function () {
+  toast('ערכו את הרשימה הקבועה למעלה');
 };
 
 window.toggleShopHideDone = function () {
@@ -2362,7 +2366,7 @@ window.finishShopTrip = async function () {
   if (!confirm(`לסיים קנייה ולהסיר ${doneIds.length} פריטים מהרשימה?\n(הרשימה הקבועה נשארת)`)) return;
   const { error } = await sb.from('shopping').delete().in('id', doneIds);
   if (error) { toast('שגיאה'); return; }
-  toast('✓ סיימתם — לקנייה הבאה: «הכן לקנייה»');
+  toast('✓ סיימתם — לקנייה הבאה: «טען מקבועה»');
   await refreshShoppingUI();
 };
 
@@ -2615,6 +2619,8 @@ const DELETE_CONFIRM = {
 async function del(table, id, refresh = false) {
   const msg = DELETE_CONFIRM[table] || 'למחוק פריט זה?';
   if (!confirm(msg + '\n\nלא ניתן לשחזר.')) return;
+  const assetType = DELETE_ASSET_EXPENSE_MAP[table];
+  if (assetType) await deleteAssetExpensesForAsset(assetType, id);
   const { error } = await sb.from(table).delete().eq('id', id);
   if (error) {
     toast('שגיאה במחיקה');
@@ -2855,14 +2861,15 @@ const forms = {
     <div class="fg"><label>תדירות</label><select id="f3"><option value="monthly">חודשי</option><option value="quarterly">רבעוני</option><option value="weekly">שבועי</option><option value="yearly">שנתי</option></select></div>
     <div class="fg"><label>תאריך ראשון</label><input id="f4" type="date"></div>`
 };
-const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', car: 'רכב חדש', cev: 'תזכורת רכב (לטפל)', cev_done: 'תיעוד ביצוע', shop: 'פריט לקנייה', staple: 'פריט ברשימה הקבועה', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', car: 'רכב חדש', cev: 'תזכורת רכב (לטפל)', cev_done: 'תיעוד ביצוע', shop: 'פריט לקנייה', staple: 'פריט ברשימה הקבועה', staple_edit: 'עריכת פריט קבוע', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
 
 const MODAL_FORM_BASE = {
   prop_edit: 'prop',
   scat_edit: 'scat',
   sacc_edit: 'sacc',
   sstk_edit: 'sstk',
-  sloan_edit: 'sloan'
+  sloan_edit: 'sloan',
+  staple_edit: 'staple'
 };
 
 function setModalField(id, value) {
@@ -2924,6 +2931,14 @@ async function loadModalForEdit(type, id) {
     setModalField('f3', l.monthly);
     setModalField('f4', l.rate);
     setModalField('f5', l.note);
+    return;
+  }
+  if (type === 'staple_edit') {
+    const { data: s, error } = await sb.from('shopping_staples').select('*').eq('id', id).single();
+    if (error || !s) { fail(); return; }
+    setModalField('f1', s.name);
+    setModalField('f2', s.qty);
+    setModalField('f3', s.category || 'other');
   }
 }
 const CF_MODAL_TITLES = {
@@ -2960,7 +2975,7 @@ async function om(type, target) {
     ? buildCfCloseForm()
     : (type === 'cf' ? buildCfFormHtml()
       : type === 'shop' ? buildShopFormHtml()
-      : type === 'staple' ? buildStapleFormHtml()
+      : (type === 'staple' || type === 'staple_edit') ? buildStapleFormHtml()
       : type === 'aexp' ? buildAexpFormHtml(String(target || '').split(':')[2] || 'once')
       : (forms[formKey] || ''));
   document.getElementById('modal').classList.add('open');
@@ -3175,16 +3190,18 @@ async function saveModal() {
       const row = { name: gv('f1'), qty: gv('f2') || '1', category: gv('f3') || 'other', done: false, added_by: '' };
       const err = await insertShopRow(row);
       if (err) throw err;
-      if (document.getElementById('f_staple')?.checked && shopStaplesAvailable) {
-        const se = await insertStapleRow({ name: row.name, qty: row.qty, category: row.category });
-        if (se && !/duplicate|unique/i.test(se.message || '')) console.warn('staple', se);
-      }
     }
-    else if (t === 'staple') {
-      const err = await insertStapleRow({ name: gv('f1'), qty: gv('f2') || '1', category: gv('f3') || 'other' });
-      if (err) {
-        toast(/duplicate|unique/i.test(err.message || '') ? 'כבר קיים ברשימה הקבועה' : 'שגיאה');
-        throw err;
+    else if (t === 'staple' || t === 'staple_edit') {
+      const row = { name: gv('f1'), qty: gv('f2') || '1', category: gv('f3') || 'other' };
+      if (t === 'staple_edit') {
+        const { error } = await sb.from('shopping_staples').update(row).eq('id', tgt);
+        if (error) throw error;
+      } else {
+        const err = await insertStapleRow(row);
+        if (err) {
+          toast(/duplicate|unique/i.test(err.message || '') ? 'כבר קיים ברשימה הקבועה' : 'שגיאה');
+          throw err;
+        }
       }
     }
     else if (t === 'act') await sb.from('activities').insert({ name: gv('f1'), child: gv('f2'), day: gv('f3'), cost: +gv('f4') || 0 });
