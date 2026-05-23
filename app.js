@@ -714,11 +714,17 @@ function goTo(page, btn) {
   navBusy = true;
   setPageLoading(true);
   Promise.resolve(renderPage(page))
+    .catch(e => {
+      console.error('renderPage', page, e);
+      toast('שגיאה בטעינת הדף');
+    })
     .finally(() => {
       navBusy = false;
       setPageLoading(false);
     });
 }
+
+window.goTo = goTo;
 
 async function refreshCurrentPage() {
   if (!sb || navBusy || isLoggingOut) return;
@@ -1702,6 +1708,7 @@ function renderLoansListHtml(loans, assetExpenses) {
 
 function updateAlertBadge(count) {
   const badge = document.getElementById('alerts-nav-badge');
+  if (!badge) return;
   if (count > 0) { badge.style.display = 'flex'; badge.textContent = count; }
   else { badge.style.display = 'none'; }
 }
@@ -2389,6 +2396,9 @@ function initShopPageUi() {
 }
 
 // ── WhatsApp: reminders + expenses ───────────────────────
+let waRealtimeChannel = null;
+let waRefreshTimer = null;
+
 async function fetchReminders() {
   if (!sb) return [];
   const { data, error } = await sb
