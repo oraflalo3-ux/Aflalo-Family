@@ -748,6 +748,10 @@ html.app-main #config-screen { display: none !important; }
       <div id="shop-staples-list" class="shop-staples-body"></div>
     </details>
   </div>
+
+</div>
+
+<div id="page-alerts" class="page">
   <div class="sec">מ-WhatsApp</div>
   <div class="two">
     <div class="card">
@@ -780,9 +784,6 @@ html.app-main #config-screen { display: none !important; }
       </div>
     </div>
   </div>
-</div>
-
-<div id="page-alerts" class="page">
   <div class="sec">התראות עדכון</div>
   <div class="card">
     <div class="card-header"><span class="card-title">התראות מוגדרות</span><button class="btn sm" onclick="om('alert')">+ הוסף</button></div>
@@ -819,7 +820,7 @@ html.app-main #config-screen { display: none !important; }
   </button>
   <button class="nav-item" onclick="goTo('daily',this)" data-page="daily">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
-    יומיומי
+    קניות
   </button>
   <button class="nav-item" onclick="goTo('alerts',this)" data-page="alerts" id="alerts-nav-btn">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
@@ -916,6 +917,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=56"></script>
+<script src="app.js?v=60"></script>
 </body>
 </html>

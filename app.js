@@ -317,7 +317,7 @@ const MODULE_NAV = [
   { page: 'savings', col: 'show_savings', label: 'חסכונות' },
   { page: 'realestate', col: 'show_realestate', label: 'נדל"ן' },
   { page: 'cars', col: 'show_cars', label: 'רכבים' },
-  { page: 'daily', col: 'show_daily', label: 'יומיומי' },
+  { page: 'daily', col: 'show_daily', label: 'קניות' },
   { page: 'alerts', col: 'show_alerts', label: 'התראות' }
 ];
 
@@ -676,7 +676,6 @@ async function init() {
   try {
     await loadFamilyPrefs();
     await Promise.all([renderAll()]);
-    ensureWhatsappRealtime();
     refreshStocks();
     setSyncStatus('✓');
   } catch (e) {
@@ -699,11 +698,9 @@ function setPageLoading(on) {
 function goTo(page, btn) {
   if (navBusy) return;
   const prev = document.querySelector('.page.active')?.id?.replace('page-', '');
-  if (prev === 'daily' && page !== 'daily') {
-    teardownShopRealtime();
-    teardownWhatsappRealtime();
-  }
-  if (page === 'daily') ensureWhatsappRealtime();
+  if (prev === 'daily' && page !== 'daily') teardownShopRealtime();
+  if (prev === 'alerts' && page !== 'alerts') teardownWhatsappRealtime();
+  if (page === 'alerts') ensureWhatsappRealtime();
   if (!isPageVisible(page)) {
     toast('מודול מוסתר — שנה ב״תצוגה משותפת״');
     page = 'overview';
@@ -758,8 +755,17 @@ async function renderAll() {
 }
 
 // ── Helpers ───────────────────────────────────────────────
-const fmt = n => Number(n || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 });
-const fmtU = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+function fmtNumber(n, maxFrac = 0) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return maxFrac > 0 ? '0' : '0';
+  return num.toLocaleString('en-US', {
+    useGrouping: true,
+    maximumFractionDigits: maxFrac,
+    minimumFractionDigits: 0
+  });
+}
+const fmt = n => fmtNumber(n, 0);
+const fmtU = n => fmtNumber(n, 2);
 const gv = id => { const e = document.getElementById(id); return e ? e.value.trim() : ''; };
 const el = (id, html) => { const e = document.getElementById(id); if (e) e.innerHTML = html; };
 
@@ -985,7 +991,7 @@ const CF_SOURCE_LABELS = {
   loans: 'הלוואות',
   savings: 'חסכונות',
   realestate: 'נדל״ן',
-  daily: 'יומיומי',
+  daily: 'חוגים',
   cars: 'רכבים',
   whatsapp: 'WhatsApp'
 };
@@ -1618,7 +1624,7 @@ async function renderOverview() {
     <button type="button" class="quick-chip primary-chip" onclick="goTo('finance', document.querySelector('.nav-item[data-page=finance]'))">💰 תזרים ועדכון סכומים</button>
     <button type="button" class="quick-chip" onclick="closeCashflowMonth()">📅 סגור חודש</button>
     <button type="button" class="quick-chip" onclick="goTo('alerts', document.querySelector('.nav-item[data-page=alerts]'))">🔔 התראות</button>
-    <button type="button" class="quick-chip" onclick="goTo('daily', document.querySelector('.nav-item[data-page=daily]'))">✓ יומיומי</button>
+    <button type="button" class="quick-chip" onclick="goTo('daily', document.querySelector('.nav-item[data-page=daily]'))">🛒 קניות</button>
   `);
 
   const cfTitle = document.getElementById('ov-cf-title');
@@ -2085,6 +2091,7 @@ async function renderCars() {
               <div style="flex:1"><div class="row-name">${ev.type}${overdue ? ' <span class="badge r">באיחור</span>' : ''}</div>${ev.note ? `<div class="row-meta">${ev.note}</div>` : ''}</div>
               ${ev.cost ? `<span class="row-amount">₪${fmt(ev.cost)}</span>` : ''}
               <span style="font-size:11px;color:var(--text3);direction:ltr">${ev.event_date}</span>
+              <button type="button" class="btn sm" onclick="om('cev_edit','${ev.id}')" title="עריכה">✏️</button>
               <button type="button" class="btn sm btn-done" onclick="openCompleteCarEvent('${ev.id}')" title="בוצע — תיעוד תאריך וק״מ">✓ בוצע</button>
               <button class="btn icon-only" onclick="del('car_events','${ev.id}',true)">🗑</button>
             </div>`;
@@ -2626,7 +2633,7 @@ async function deleteWhatsappReminder(id) {
   if (error) { toast('שגיאה במחיקה'); console.error(error); return; }
   toast('נמחק');
   await refreshWhatsappPanels();
-  if (document.getElementById('page-daily')?.classList.contains('active')) await renderDaily();
+  if (document.getElementById('page-alerts')?.classList.contains('active')) await renderAlerts();
 }
 
 async function deleteWhatsappExpense(id) {
@@ -2644,15 +2651,17 @@ async function deleteWhatsappExpense(id) {
 window.deleteWhatsappReminder = deleteWhatsappReminder;
 window.deleteWhatsappExpense = deleteWhatsappExpense;
 
-// ── Daily ─────────────────────────────────────────────────
+// ── Daily (shopping only) ─────────────────────────────────
 async function renderDaily() {
   ensureShopRealtime();
-  ensureWhatsappRealtime();
-  const [shopping, staples, activities, tasks, reminders] = await Promise.all([
-    fetch_('shopping'), fetchShoppingStaples(), fetch_('activities'), fetch_('tasks'), fetch_('reminders')
-  ]);
-
+  const [shopping, staples] = await Promise.all([fetch_('shopping'), fetchShoppingStaples()]);
   renderShopSection(shopping, staples);
+}
+
+async function renderAlertsPanels() {
+  const [activities, tasks, reminders] = await Promise.all([
+    fetch_('activities'), fetch_('tasks'), fetch_('reminders')
+  ]);
 
   el('act-list', activities.map(a => `
     <div class="row">
@@ -2689,6 +2698,8 @@ async function renderDaily() {
 
 // ── Alerts ────────────────────────────────────────────────
 async function renderAlerts() {
+  ensureWhatsappRealtime();
+  await renderAlertsPanels();
   const [defs, history] = await Promise.all([fetch_('alert_defs'), fetch_('alert_history', 'done_at')]);
   const freqL = { daily: 'יומי', weekly: 'שבועי', monthly: 'חודשי', quarterly: 'רבעוני', yearly: 'שנתי' };
   const catL = { finance: 'תזרים', savings: 'חסכונות', realestate: 'נדל"ן', cars: 'רכבים', general: 'כללי' };
@@ -3024,7 +3035,7 @@ const forms = {
     <div class="fg"><label>תדירות</label><select id="f3"><option value="monthly">חודשי</option><option value="quarterly">רבעוני</option><option value="weekly">שבועי</option><option value="yearly">שנתי</option></select></div>
     <div class="fg"><label>תאריך ראשון</label><input id="f4" type="date"></div>`
 };
-const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', car: 'רכב חדש', cev: 'תזכורת רכב (לטפל)', cev_done: 'תיעוד ביצוע', shop: 'פריט לקנייה', staple: 'פריט ברשימה הקבועה', staple_edit: 'עריכת פריט קבוע', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', car: 'רכב חדש', cev: 'תזכורת רכב (לטפל)', cev_edit: 'עריכת תזכורת רכב', cev_done: 'תיעוד ביצוע', shop: 'פריט לקנייה', staple: 'פריט ברשימה הקבועה', staple_edit: 'עריכת פריט קבוע', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
 
 const MODAL_FORM_BASE = {
   prop_edit: 'prop',
@@ -3032,7 +3043,8 @@ const MODAL_FORM_BASE = {
   sacc_edit: 'sacc',
   sstk_edit: 'sstk',
   sloan_edit: 'sloan',
-  staple_edit: 'staple'
+  staple_edit: 'staple',
+  cev_edit: 'cev'
 };
 
 function setModalField(id, value) {
@@ -3102,6 +3114,22 @@ async function loadModalForEdit(type, id) {
     setModalField('f1', s.name);
     setModalField('f2', s.qty);
     setModalField('f3', s.category || 'other');
+    return;
+  }
+  if (type === 'cev_edit') {
+    const { data: ev, error } = await sb.from('car_events').select('*').eq('id', id).single();
+    if (error || !ev) { fail(); return; }
+    const sel = document.getElementById('f1');
+    if (sel && ev.type && ![...sel.options].some(o => o.value === ev.type)) {
+      const opt = document.createElement('option');
+      opt.value = ev.type;
+      opt.textContent = ev.type;
+      sel.appendChild(opt);
+    }
+    setModalField('f1', ev.type);
+    setModalField('f2', ev.event_date);
+    setModalField('f3', ev.note || '');
+    setModalField('f4', ev.cost || '');
   }
 }
 const CF_MODAL_TITLES = {
@@ -3334,19 +3362,26 @@ async function saveModal() {
       await renderOverview();
       return;
     }
-    else if (t === 'cev') {
+    else if (t === 'cev' || t === 'cev_edit') {
       const cost = +gv('f4') || 0;
-      await sb.from('car_events').insert({ car_id: tgt, type: gv('f1'), event_date: gv('f2'), note: gv('f3'), cost });
-      if (cost > 0 && assetExpensesTableOk) {
-        await sb.from('asset_expenses').insert({
-          asset_type: 'car',
-          asset_id: tgt,
-          name: `${gv('f1')}${gv('f3') ? ' — ' + gv('f3') : ''}`,
-          amount: cost,
-          kind: 'once',
-          expense_date: gv('f2') || '',
-          note: ''
-        });
+      const row = { type: gv('f1'), event_date: gv('f2'), note: gv('f3'), cost };
+      if (!row.event_date) { toast('נא למלא תאריך יעד'); return; }
+      if (t === 'cev_edit') {
+        const { error } = await sb.from('car_events').update(row).eq('id', tgt);
+        if (error) throw error;
+      } else {
+        await sb.from('car_events').insert({ ...row, car_id: tgt });
+        if (cost > 0 && assetExpensesTableOk) {
+          await sb.from('asset_expenses').insert({
+            asset_type: 'car',
+            asset_id: tgt,
+            name: `${gv('f1')}${gv('f3') ? ' — ' + gv('f3') : ''}`,
+            amount: cost,
+            kind: 'once',
+            expense_date: gv('f2') || '',
+            note: ''
+          });
+        }
       }
     }
     else if (t === 'shop') {
