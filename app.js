@@ -676,6 +676,7 @@ async function init() {
   try {
     await loadFamilyPrefs();
     await Promise.all([renderAll()]);
+    ensureWhatsappRealtime();
     refreshStocks();
     setSyncStatus('✓');
   } catch (e) {
@@ -698,7 +699,11 @@ function setPageLoading(on) {
 function goTo(page, btn) {
   if (navBusy) return;
   const prev = document.querySelector('.page.active')?.id?.replace('page-', '');
-  if (prev === 'daily' && page !== 'daily') teardownShopRealtime();
+  if (prev === 'daily' && page !== 'daily') {
+    teardownShopRealtime();
+    teardownWhatsappRealtime();
+  }
+  if (page === 'daily') ensureWhatsappRealtime();
   if (!isPageVisible(page)) {
     toast('מודול מוסתר — שנה ב״תצוגה משותפת״');
     page = 'overview';
@@ -962,8 +967,26 @@ const CF_SOURCE_LABELS = {
   savings: 'חסכונות',
   realestate: 'נדל״ן',
   daily: 'יומיומי',
-  cars: 'רכבים'
+  cars: 'רכבים',
+  whatsapp: 'WhatsApp'
 };
+
+function appendWhatsappExpenseLines(lines, expenses) {
+  (expenses || []).forEach(e => {
+    if (!isInCurrentCashflowMonth(e.expense_date)) return;
+    const amount = Number(e.amount || 0);
+    if (amount <= 0) return;
+    const who = e.who ? ` · ${e.who}` : '';
+    lines.push({
+      key: `wa-exp-${e.id}`,
+      name: `${e.description || 'הוצאה'}${who}`,
+      amount,
+      source: 'whatsapp',
+      kind: 'once'
+    });
+  });
+  return lines;
+}
 
 /** לאיזה חודש שייכת הוצאה/אירוע (לפי תאריך או החודש הנוכחי אם חסר) */
 function parseCashflowMonthYear(dateStr) {
@@ -1171,13 +1194,14 @@ function buildExternalExpenseLinesLegacy(loans, savLoans, props, activities, pro
   return lines;
 }
 
-function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy) {
+function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy, whatsappExpenses) {
+  let lines;
   if (assetExpenses === null) {
-    return buildExternalExpenseLinesLegacy(
+    lines = buildExternalExpenseLinesLegacy(
       legacy.loans, legacy.savLoans, props, activities, legacy.propExpenses, legacy.carEvents, legacy.cars
     );
-  }
-  const lines = [];
+  } else {
+  lines = [];
   (assetExpenses || []).forEach(e => {
     if (e.kind === 'once' && !isInCurrentCashflowMonth(e.expense_date)) return;
     const amount = Number(e.amount || 0);
@@ -1203,24 +1227,25 @@ function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy
       });
     }
   });
-  return lines;
+  }
+  return appendWhatsappExpenseLines(lines, whatsappExpenses);
 }
 
 function sumCfLines(lines) {
   return (lines || []).reduce((a, l) => a + Number(l.amount || 0), 0);
 }
 
-function calcLoanMonthlyPayments(assetExpenses, loans, savLoans, ctx, legacy) {
-  const lines = buildExternalExpenseLines(assetExpenses, [], [], ctx, legacy);
+function calcLoanMonthlyPayments(assetExpenses, loans, savLoans, ctx, legacy, whatsappExpenses) {
+  const lines = buildExternalExpenseLines(assetExpenses, [], [], ctx, legacy, whatsappExpenses);
   return sumCfLines(lines.filter(l => l.source === 'loans' || l.source === 'savings'));
 }
 
-function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacyBundle) {
+function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacyBundle, whatsappExpenses) {
   const cfInc = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0);
   const cfExp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0);
   const ctx = { props, cars: legacyBundle.cars, loans, savLoans, cats: legacyBundle.cats };
   const externalIncome = buildExternalIncomeLines(props);
-  const externalExpense = buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacyBundle);
+  const externalExpense = buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacyBundle, whatsappExpenses);
   const income = cfInc + sumCfLines(externalIncome);
   const expense = cfExp + sumCfLines(externalExpense);
   const loanMonthly = sumCfLines(externalExpense.filter(l => (l.source === 'loans' || l.source === 'savings') && l.kind === 'monthly'));
@@ -1228,6 +1253,7 @@ function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpense
   const propOnce = sumCfLines(externalExpense.filter(l => l.source === 'realestate' && l.kind === 'once'));
   const carsOnce = sumCfLines(externalExpense.filter(l => l.source === 'cars'));
   const activitiesMonthly = sumCfLines(externalExpense.filter(l => l.source === 'daily'));
+  const whatsappOnce = sumCfLines(externalExpense.filter(l => l.source === 'whatsapp'));
   return {
     income,
     expense,
@@ -1240,7 +1266,8 @@ function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpense
     propMonthly,
     propOnce,
     carsOnce,
-    activitiesMonthly
+    activitiesMonthly,
+    whatsappOnce
   };
 }
 
@@ -1256,19 +1283,38 @@ async function fetchCashflowMonthly() {
   return (data || []).sort((a, b) => b.year - a.year || b.month - a.month);
 }
 
+async function fetchWhatsappExpenses() {
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from('expenses')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) {
+    if (/does not exist|relation|schema cache/i.test(error.message || '')) {
+      expensesTableOk = false;
+      return [];
+    }
+    console.error('fetchWhatsappExpenses', error);
+    return [];
+  }
+  expensesTableOk = true;
+  return data || [];
+}
+
 async function fetchCashflowBundle() {
-  const [cf, props, loans, savLoans, activities, propExpenses, carEvents, cars, cats, assetExpenses] = await Promise.all([
+  const [cf, props, loans, savLoans, activities, propExpenses, carEvents, cars, cats, assetExpenses, whatsappExpenses] = await Promise.all([
     fetch_('cashflow'), fetch_('properties'), fetch_('loans'), fetch_('savings_loans'), fetch_('activities'),
     fetch_('property_expenses'), fetch_('car_events'), fetch_('cars'), fetch_('savings_cats'),
-    fetchAssetExpenses()
+    fetchAssetExpenses(),
+    fetchWhatsappExpenses()
   ]);
   const legacy = { loans, savLoans, propExpenses, carEvents, cars, cats };
-  return { cf, props, loans, savLoans, activities, propExpenses, carEvents, cars, cats, assetExpenses, legacy };
+  return { cf, props, loans, savLoans, activities, propExpenses, carEvents, cars, cats, assetExpenses, legacy, whatsappExpenses };
 }
 
 async function saveCashflowMonthSnapshot(year, month) {
   const b = await fetchCashflowBundle();
-  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy);
+  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses);
   const { error } = await sb.from('cashflow_monthly').upsert({
     year,
     month,
@@ -1293,7 +1339,7 @@ async function closeCashflowMonth(year, month) {
   const y = year ?? getIsraelYearMonth().year;
   const m = month ?? getIsraelYearMonth().month;
   const b = await fetchCashflowBundle();
-  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy);
+  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses);
   const label = `${MONTH_NAMES_HE[m]} ${y}`;
   const rows = await fetchCashflowMonthly();
   const exists = rows.some(r => r.year === y && r.month === m);
@@ -1336,7 +1382,7 @@ async function renderCashflowHistoryOnly() {
 
   const yearRows = rows.filter(r => r.year === cfHistoryYear);
   const draft = cfHistoryYear === curY
-    ? calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy)
+    ? calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy, b.whatsappExpenses)
     : null;
 
   let yInc = 0;
@@ -1448,10 +1494,11 @@ async function fetch_(table, order = 'created_at') {
 
 // ── Overview ──────────────────────────────────────────────
 async function renderOverview() {
-  const [loans, cc, cf, cats, accs, stocks, savLoans, props, activities, assetExpenses, alertDefs, cars, carEvents, propExpenses] = await Promise.all([
+  const [loans, cc, cf, cats, accs, stocks, savLoans, props, activities, assetExpenses, whatsappExpenses, alertDefs, cars, carEvents, propExpenses] = await Promise.all([
     fetch_('loans'), fetch_('credit_cards'), fetch_('cashflow'),
     fetch_('savings_cats'), fetch_('savings_accounts'), fetch_('savings_stocks'),
     fetch_('savings_loans'), fetch_('properties'), fetch_('activities'), fetchAssetExpenses(),
+    fetchWhatsappExpenses(),
     fetch_('alert_defs'), fetch_('cars'), fetch_('car_events', 'event_date'), fetch_('property_expenses')
   ]);
   const legacy = { loans, savLoans, propExpenses, carEvents, cars, cats };
@@ -1469,7 +1516,7 @@ async function renderOverview() {
   const totalDebt = loanTotal + reMort + savLoanTotal;
   const netWorth = totalAssets - totalDebt;
 
-  const cfTotals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy);
+  const cfTotals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses);
   const { income, expense: expenses, net: cfNet } = cfTotals;
 
   const fixedInc = cf.filter(c => c.type === 'income' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
@@ -1477,7 +1524,7 @@ async function renderOverview() {
   const rentInc = sumCfLines(cfTotals.externalIncome);
   const fixedExp = cf.filter(c => c.type === 'expense' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const varExp = cf.filter(c => c.type === 'expense' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
-  const { loanMonthly, propMonthly, propOnce, carsOnce, activitiesMonthly } = cfTotals;
+  const { loanMonthly, propMonthly, propOnce, carsOnce, activitiesMonthly, whatsappOnce } = cfTotals;
   const monthLabel = getHebrewMonthYearLabel();
 
   el('ov-hero', `
@@ -1516,6 +1563,9 @@ async function renderOverview() {
   }
   if (activitiesMonthly > 0) {
     expMet.push(`<div class="met"><div class="ml">חוגים (חודשי)</div><div class="mv r">₪${fmt(activitiesMonthly)}</div></div>`);
+  }
+  if (whatsappOnce > 0) {
+    expMet.push(`<div class="met"><div class="ml">WhatsApp (החודש)</div><div class="mv r">₪${fmt(whatsappOnce)}</div></div>`);
   }
   el('ov-expenses', expMet.join(''));
 
@@ -1664,10 +1714,10 @@ function renderCashflowTableSection(cfItems, externalLines, emptyText) {
   return html;
 }
 
-function renderCashflowTables(cf, props, loans, savLoans, activities, assetExpenses, legacy) {
+function renderCashflowTables(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses) {
   const income = cf.filter(c => c.type === 'income');
   const expense = cf.filter(c => c.type === 'expense');
-  const totals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy);
+  const totals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses);
   const monthLbl = getHebrewMonthYearLabel();
 
   el('cf-income-tbody', renderCashflowTableSection(
@@ -1724,9 +1774,9 @@ async function renderFinance() {
   const [loans, savLoans, cc, b] = await Promise.all([
     fetch_('loans'), fetch_('savings_loans'), fetch_('credit_cards'), fetchCashflowBundle()
   ]);
-  const { cf, props, activities, assetExpenses, legacy } = b;
+  const { cf, props, activities, assetExpenses, legacy, whatsappExpenses } = b;
 
-  const { income: inc, expense: exp, net } = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy);
+  const { income: inc, expense: exp, net } = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses);
 
   el('fin-summary', `
     <div class="met"><div class="ml">הכנסות</div><div class="mv g">₪${fmt(inc)}</div></div>
@@ -1766,7 +1816,7 @@ async function renderFinance() {
       </div>`);
   }
 
-  renderCashflowTables(cf, props, loans, savLoans, activities, assetExpenses, legacy);
+  renderCashflowTables(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses);
 
   await renderCashflowHistoryOnly();
 }
@@ -2021,6 +2071,9 @@ const SHOP_CATS = [
 
 let shopRealtimeChannel = null;
 let shopRefreshTimer = null;
+let waRealtimeChannel = null;
+let waRefreshTimer = null;
+let expensesTableOk = true;
 let shopStaplesAvailable = true;
 
 function getShopHideDone() {
@@ -2322,9 +2375,120 @@ function bindShopQuickInput() {
   });
 }
 
+// ── WhatsApp: reminders + expenses ───────────────────────
+async function fetchReminders() {
+  if (!sb) return [];
+  const { data, error } = await sb
+    .from('reminders')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) {
+    console.error('fetchReminders', error);
+    return [];
+  }
+  return data || [];
+}
+
+async function fetchExpenses() {
+  return fetchWhatsappExpenses();
+}
+
+function renderReminders(rows) {
+  const box = document.getElementById('reminders-container');
+  if (!box) return;
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">אין תזכורות מ-WhatsApp</div>';
+    return;
+  }
+  box.innerHTML = rows.map(r => `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:0.5px solid var(--border)">
+      <span class="row-name" style="flex:1">${escHtml(r.text)}</span>
+      <span class="row-meta">${escHtml(r.who || '')}</span>
+      <button type="button" class="btn icon-only" onclick="deleteWhatsappReminder('${r.id}')" title="מחק">🗑</button>
+    </div>`).join('');
+}
+
+function renderExpenses(rows) {
+  const box = document.getElementById('expenses-container');
+  if (!box) return;
+  if (!expensesTableOk) {
+    box.innerHTML = '<p class="hint">הרץ expenses-migration.sql ב-Supabase</p>';
+    return;
+  }
+  if (!rows.length) {
+    box.innerHTML = '<div class="empty">אין הוצאות מ-WhatsApp</div>';
+    return;
+  }
+  box.innerHTML = rows.map(e => `
+    <div class="row">
+      <div style="flex:1">
+        <div class="row-name">${escHtml(e.description)}</div>
+        <div class="row-meta">${escHtml(e.who || '')}${e.expense_date ? ` · ${escHtml(e.expense_date)}` : ''}</div>
+      </div>
+      <div style="display:flex;gap:5px;align-items:center">
+        <span class="row-amount r">₪${fmt(e.amount)}</span>
+        <button type="button" class="btn icon-only" onclick="deleteWhatsappExpense('${e.id}')" title="מחק">🗑</button>
+      </div>
+    </div>`).join('');
+}
+
+async function refreshWhatsappPanels() {
+  if (!document.getElementById('reminders-container') && !document.getElementById('expenses-container')) return;
+  const [reminders, expenses] = await Promise.all([fetchReminders(), fetchExpenses()]);
+  renderReminders(reminders);
+  renderExpenses(expenses);
+}
+
+function scheduleWhatsappRefresh() {
+  clearTimeout(waRefreshTimer);
+  waRefreshTimer = setTimeout(() => refreshWhatsappPanels(), 120);
+}
+
+function ensureWhatsappRealtime() {
+  if (!sb || waRealtimeChannel) return;
+  waRealtimeChannel = sb.channel('wa-sync')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'reminders' }, scheduleWhatsappRefresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, scheduleWhatsappRefresh)
+    .subscribe();
+}
+
+function teardownWhatsappRealtime() {
+  if (waRealtimeChannel && sb) {
+    sb.removeChannel(waRealtimeChannel);
+    waRealtimeChannel = null;
+  }
+  clearTimeout(waRefreshTimer);
+}
+
+async function deleteWhatsappReminder(id) {
+  if (!sb) return;
+  if (!confirm('למחוק תזכורת זו?\n\nלא ניתן לשחזר.')) return;
+  const { error } = await sb.from('reminders').delete().eq('id', id);
+  if (error) { toast('שגיאה במחיקה'); console.error(error); return; }
+  toast('נמחק');
+  await refreshWhatsappPanels();
+  if (document.getElementById('page-daily')?.classList.contains('active')) await renderDaily();
+}
+
+async function deleteWhatsappExpense(id) {
+  if (!sb) return;
+  if (!confirm('למחוק הוצאה זו?\n\nלא ניתן לשחזר.')) return;
+  const { error } = await sb.from('expenses').delete().eq('id', id);
+  if (error) { toast('שגיאה במחיקה'); console.error(error); return; }
+  toast('נמחק');
+  await refreshWhatsappPanels();
+  const page = document.querySelector('.page.active')?.id?.replace('page-', '');
+  if (page === 'finance') await renderFinance();
+  if (page === 'overview' || page === 'finance') renderOverview();
+}
+
+window.deleteWhatsappReminder = deleteWhatsappReminder;
+window.deleteWhatsappExpense = deleteWhatsappExpense;
+
 // ── Daily ─────────────────────────────────────────────────
 async function renderDaily() {
   ensureShopRealtime();
+  ensureWhatsappRealtime();
   const [shopping, staples, activities, tasks, reminders] = await Promise.all([
     fetch_('shopping'), fetchShoppingStaples(), fetch_('activities'), fetch_('tasks'), fetch_('reminders')
   ]);
@@ -2353,6 +2517,8 @@ async function renderDaily() {
       <span class="row-meta">${r.who}</span>
       <button class="btn icon-only" onclick="del('reminders','${r.id}',true)">🗑</button>
     </div>`).join('') || '<div class="empty">אין</div>');
+
+  await refreshWhatsappPanels();
 }
 
 // ── Alerts ────────────────────────────────────────────────
@@ -2572,7 +2738,7 @@ async function refreshStocks() {
 async function shareWA() {
   const b = await fetchCashflowBundle();
   const { income: inc, expense: exp, net } = calcCashflowTotals(
-    b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy
+    b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses
   );
   let msg = `*משפחת אפללו — סיכום*\n${new Date().toLocaleDateString('he-IL')}\n\n`;
   msg += `💵 תזרים נטו: ₪${fmt(net)}\n`;

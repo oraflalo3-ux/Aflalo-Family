@@ -663,6 +663,17 @@ html.app-main #config-screen { display: none !important; }
       <button type="button" class="btn sm" onclick="om('staple')">+ לרשימה הקבועה</button>
     </details>
   </div>
+  <div class="sec">מ-WhatsApp</div>
+  <div class="two">
+    <div class="card">
+      <div class="card-header"><span class="card-title">תזכורות WhatsApp</span></div>
+      <div id="reminders-container"></div>
+    </div>
+    <div class="card">
+      <div class="card-header"><span class="card-title">הוצאות WhatsApp</span></div>
+      <div id="expenses-container"></div>
+    </div>
+  </div>
   <div class="two">
     <div>
       <div class="sec">חוגים</div>
@@ -809,6 +820,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=48"></script>
+<script src="app.js?v=50"></script>
 </body>
 </html>
