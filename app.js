@@ -1002,9 +1002,10 @@ const CF_SOURCE_LABELS = {
   whatsapp: 'WhatsApp'
 };
 
-function appendWhatsappExpenseLines(lines, expenses) {
+function appendWhatsappExpenseLines(lines, expenses, cfMonth) {
+  const ym = cfMonth || getIsraelYearMonth();
   (expenses || []).forEach(e => {
-    if (!isInCurrentCashflowMonth(e.expense_date)) return;
+    if (!isInCashflowMonth(e.expense_date, ym.year, ym.month)) return;
     const amount = Number(e.amount || 0);
     if (amount <= 0) return;
     const who = e.who ? ` · ${e.who}` : '';
@@ -1036,10 +1037,55 @@ function parseCashflowMonthYear(dateStr) {
   return getIsraelYearMonth();
 }
 
+function isInCashflowMonth(dateStr, year, month) {
+  const p = parseCashflowMonthYear(dateStr);
+  return p.year === year && p.month === month;
+}
+
 function isInCurrentCashflowMonth(dateStr) {
   const cur = getIsraelYearMonth();
-  const p = parseCashflowMonthYear(dateStr);
-  return p.year === cur.year && p.month === cur.month;
+  return isInCashflowMonth(dateStr, cur.year, cur.month);
+}
+
+/** שלושת הימים האחרונים בחודש (שעון ישראל) */
+function isEndOfIsraelMonth() {
+  const { year, month } = getIsraelYearMonth();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Jerusalem',
+    day: 'numeric'
+  }).formatToParts(new Date());
+  const day = +parts.find(p => p.type === 'day').value;
+  const lastDay = new Date(year, month, 0).getDate();
+  return day >= lastDay - 2;
+}
+
+async function isCurrentMonthCashflowClosed() {
+  const { year, month } = getIsraelYearMonth();
+  const rows = await fetchCashflowMonthly();
+  return rows.some(r => r.year === year && r.month === month);
+}
+
+async function renderMonthCloseReminder() {
+  const show = isEndOfIsraelMonth() && !(await isCurrentMonthCashflowClosed());
+  const { month } = getIsraelYearMonth();
+  const label = MONTH_NAMES_HE[month];
+  const html = show ? `
+    <div class="cf-close-banner-inner">
+      <span>📅 סוף חודש — לסגור את <strong>${label}</strong> ביומן ההיסטוריה?</span>
+      <button type="button" class="btn sm primary" onclick="closeCashflowMonth()">סגור חודש</button>
+    </div>` : '';
+  ['cf-close-reminder', 'cf-close-reminder-ov'].forEach(id => {
+    const node = document.getElementById(id);
+    if (!node) return;
+    if (!show) {
+      node.innerHTML = '';
+      node.hidden = true;
+      return;
+    }
+    node.hidden = false;
+    node.className = id === 'cf-close-reminder' ? 'cf-close-banner' : 'cf-close-banner';
+    node.innerHTML = html;
+  });
 }
 
 function buildExternalIncomeLines(props) {
@@ -1269,7 +1315,8 @@ function renderAssetExpensesPanel(assetType, assetId, assetExpenses) {
   </div>`;
 }
 
-function buildExternalExpenseLinesLegacy(loans, savLoans, props, activities, propExpenses, carEvents, cars) {
+function buildExternalExpenseLinesLegacy(loans, savLoans, props, activities, propExpenses, carEvents, cars, cfMonth) {
+  const ym = cfMonth || getIsraelYearMonth();
   const lines = [];
   const propById = Object.fromEntries((props || []).map(p => [p.id, p]));
   const carById = Object.fromEntries((cars || []).map(c => [c.id, c]));
@@ -1288,14 +1335,14 @@ function buildExternalExpenseLinesLegacy(loans, savLoans, props, activities, pro
     if (exp > 0) lines.push({ key: `prop-exp-${p.id}`, name: `הוצאות נכס — ${p.name}`, amount: exp, source: 'realestate', kind: 'monthly' });
   });
   (propExpenses || []).forEach(e => {
-    if (!isInCurrentCashflowMonth(e.expense_date)) return;
+    if (!isInCashflowMonth(e.expense_date, ym.year, ym.month)) return;
     const amount = Number(e.amount || 0);
     if (amount <= 0) return;
     const p = propById[e.property_id];
     lines.push({ key: `pexp-${e.id}`, name: `חד-פעמי — ${p ? p.name + ': ' : ''}${e.name}`, amount, source: 'realestate', kind: 'once' });
   });
   (carEvents || []).forEach(ev => {
-    if (!isInCurrentCashflowMonth(ev.event_date)) return;
+    if (!isInCashflowMonth(ev.event_date, ym.year, ym.month)) return;
     const amount = Number(ev.cost || 0);
     if (amount <= 0) return;
     const car = carById[ev.car_id];
@@ -1308,16 +1355,17 @@ function buildExternalExpenseLinesLegacy(loans, savLoans, props, activities, pro
   return lines;
 }
 
-function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy, whatsappExpenses) {
+function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy, whatsappExpenses, cfMonth) {
+  const ym = cfMonth || getIsraelYearMonth();
   let lines;
   if (assetExpenses === null) {
     lines = buildExternalExpenseLinesLegacy(
-      legacy.loans, legacy.savLoans, props, activities, legacy.propExpenses, legacy.carEvents, legacy.cars
+      legacy.loans, legacy.savLoans, props, activities, legacy.propExpenses, legacy.carEvents, legacy.cars, ym
     );
   } else {
   lines = [];
   (assetExpenses || []).forEach(e => {
-    if (e.kind === 'once' && !isInCurrentCashflowMonth(e.expense_date)) return;
+    if (e.kind === 'once' && !isInCashflowMonth(e.expense_date, ym.year, ym.month)) return;
     if (!assetExpenseParentExists(e.asset_type, e.asset_id, ctx)) return;
     const amount = Number(e.amount || 0);
     if (amount <= 0) return;
@@ -1343,7 +1391,7 @@ function buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacy
     }
   });
   }
-  return appendWhatsappExpenseLines(lines, whatsappExpenses);
+  return appendWhatsappExpenseLines(lines, whatsappExpenses, ym);
 }
 
 function sumCfLines(lines) {
@@ -1355,12 +1403,13 @@ function calcLoanMonthlyPayments(assetExpenses, loans, savLoans, ctx, legacy, wh
   return sumCfLines(lines.filter(l => l.source === 'loans' || l.source === 'savings'));
 }
 
-function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacyBundle, whatsappExpenses) {
+function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacyBundle, whatsappExpenses, cfMonth) {
+  const ym = cfMonth || getIsraelYearMonth();
   const cfInc = cf.filter(x => x.type === 'income').reduce((a, b) => a + Number(b.amount), 0);
   const cfExp = cf.filter(x => x.type === 'expense').reduce((a, b) => a + Number(b.amount), 0);
   const ctx = { props, cars: legacyBundle.cars, loans, savLoans, cats: legacyBundle.cats };
   const externalIncome = buildExternalIncomeLines(props);
-  const externalExpense = buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacyBundle, whatsappExpenses);
+  const externalExpense = buildExternalExpenseLines(assetExpenses, props, activities, ctx, legacyBundle, whatsappExpenses, ym);
   const income = cfInc + sumCfLines(externalIncome);
   const expense = cfExp + sumCfLines(externalExpense);
   const loanMonthly = sumCfLines(externalExpense.filter(l => (l.source === 'loans' || l.source === 'savings') && l.kind === 'monthly'));
@@ -1431,13 +1480,14 @@ async function fetchCashflowBundle() {
 
 async function saveCashflowMonthSnapshot(year, month) {
   const b = await fetchCashflowBundle();
-  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses);
+  const cfMonth = { year, month };
+  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses, cfMonth);
   const { error } = await sb.from('cashflow_monthly').upsert({
     year,
     month,
     income_total: t.income,
     expense_total: t.expense,
-    note: `נסגר ${new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' })}`
+    note: `נסגר ${new Date().toLocaleDateString('he-IL', { timeZone: 'Asia/Jerusalem' })} · ${MONTH_NAMES_HE[month]} ${year}`
   }, { onConflict: 'year,month' });
   if (error) {
     if (error.message?.includes('cashflow_monthly') || error.code === 'PGRST205') {
@@ -1455,15 +1505,25 @@ async function closeCashflowMonth(year, month) {
   if (!sb) { toast('לא מחובר'); return; }
   const y = year ?? getIsraelYearMonth().year;
   const m = month ?? getIsraelYearMonth().month;
+  const cfMonth = { year: y, month: m };
   const b = await fetchCashflowBundle();
-  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses);
+  const t = calcCashflowTotals(b.cf, b.props, b.loans, b.savLoans, b.activities, b.assetExpenses, b.legacy, b.whatsappExpenses, cfMonth);
   const label = `${MONTH_NAMES_HE[m]} ${y}`;
   const rows = await fetchCashflowMonthly();
   const exists = rows.some(r => r.year === y && r.month === m);
+  const cur = getIsraelYearMonth();
+  const isRetro = y !== cur.year || m !== cur.month;
   const extNote = t.externalExpense.length
-    ? `\n(כולל ${t.externalExpense.length} הוצאות חודשיות ממודולים אחרים)`
+    ? `\n(כולל ${t.externalExpense.length} שורות הוצאה/הכנסה ממודולים)`
     : '';
-  const msg = `${exists ? 'לעדכן' : 'לשמור'} סיכום ${label}?\n\nהכנסות: ₪${fmt(t.income)}\nהוצאות: ₪${fmt(t.expense)}\nנטו: ₪${fmt(t.net)}${extNote}\n\n(תזרים + כל ההוצאות/הכנסות החודשיות במערכת)`;
+  const onceCount = (t.externalExpense || []).filter(l => l.kind === 'once').length;
+  const monthNote = onceCount
+    ? `\nהוצאות חד-פעמיות (${onceCount}) נספרו לפי תאריך בחודש ${label}.`
+    : '';
+  const retroNote = isRetro
+    ? `\n\n📌 סגירה רטרואקטיבית לחודש ${label} — לא לחודש הנוכחי.`
+    : '';
+  const msg = `${exists ? 'לעדכן' : 'לשמור'} סיכום ${label}?\n\nהכנסות: ₪${fmt(t.income)}\nהוצאות: ₪${fmt(t.expense)}\nנטו: ₪${fmt(t.net)}${extNote}${monthNote}${retroNote}\n\n(תזרים קבוע + הוצאות חד-פעמיות של אותו חודש)`;
   if (!confirm(msg)) return;
   const ok = await saveCashflowMonthSnapshot(y, m);
   if (!ok) return;
@@ -1572,6 +1632,7 @@ async function renderCashflowHistoryOnly() {
       <span><i class="hist-dot hist-dot-closed"></i> חודש שנסגר ונשמר</span>
       <span><i class="hist-dot hist-dot-draft"></i> טיוטה — החודש הנוכחי, עדיין לא נסגר</span>
       <span>— חודש ללא סיכום</span>
+      <span class="hist-legend-note">בסגירה: הוצאות חד-פעמיות לפי תאריך באותו חודש; קבועות לפי המצב הנוכחי</span>
     </div>
   `);
 }
@@ -1590,7 +1651,7 @@ function buildCfCloseForm() {
   }
   return `<div class="fg"><label>שנה</label><select id="f1">${yearOpts}</select></div>
     <div class="fg"><label>חודש</label><select id="f2">${monthOpts}</select></div>
-    <p style="font-size:12px;color:var(--text2);margin:0">נשמר סיכום לפי התזרים והנדל״ן כפי שהם עכשיו במערכת.</p>`;
+    <p style="font-size:12px;color:var(--text2);margin:0;line-height:1.5">נשמר סיכום לחודש שבחרת: תזרים קבוע + הוצאות חד-פעמיות (וואטסאפ, נדל״ן, רכב) לפי תאריך באותו חודש.</p>`;
 }
 
 window.closeCashflowMonth = closeCashflowMonth;
@@ -1694,6 +1755,8 @@ async function renderOverview() {
     <button type="button" class="quick-chip" onclick="goTo('alerts', document.querySelector('.nav-item[data-page=alerts]'))">🔔 התראות</button>
     <button type="button" class="quick-chip" onclick="goTo('daily', document.querySelector('.nav-item[data-page=daily]'))">🛒 קניות</button>
   `);
+
+  await renderMonthCloseReminder();
 
   const cfTitle = document.getElementById('ov-cf-title');
   if (cfTitle) cfTitle.textContent = `תזרים · ${monthLabel}`;
@@ -1896,6 +1959,8 @@ async function renderFinance() {
     fetch_('loans'), fetch_('savings_loans'), fetch_('credit_cards'), fetchCashflowBundle()
   ]);
   const { cf, props, activities, assetExpenses, legacy, whatsappExpenses } = b;
+
+  await renderMonthCloseReminder();
 
   const { income: inc, expense: exp, net } = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses);
 

@@ -180,6 +180,14 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .hist-table tfoot .hist-year-sub { font-size: 11px; font-weight: 500; color: var(--text2); display: block; margin-top: 2px; }
 .hist-legend { display: flex; flex-wrap: wrap; gap: .75rem 1.25rem; margin-top: .75rem; font-size: 11px; color: var(--text3); }
 .hist-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.hist-legend-note { flex: 1 1 100%; line-height: 1.45; }
+.cf-close-banner { margin: 0 0 .85rem; }
+.cf-close-banner-inner {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .65rem;
+  padding: .75rem 1rem; border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(186,117,23,.12), rgba(241,239,232,.9));
+  border: 1px solid rgba(186,117,23,.35); font-size: 13px;
+}
 .hist-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .hist-dot-draft { background: #BA7517; }
 .hist-dot-closed { background: var(--green-mid); }
@@ -615,6 +623,7 @@ html.app-main #config-screen { display: none !important; }
   <div class="sec sec-flex"><span>לטפל עכשיו</span><span id="ov-urgent-count"></span></div>
   <div class="card" id="ov-alerts"></div>
   <div id="ov-quick" class="quick-actions"></div>
+  <div id="cf-close-reminder-ov" hidden></div>
   <div class="sec">פירוט הכנסות</div>
   <div id="ov-income" class="mrow ov-summary-row"></div>
   <div class="sec">פירוט הוצאות</div>
@@ -682,6 +691,7 @@ html.app-main #config-screen { display: none !important; }
     </div>
   </div>
   <div class="sec">יומן היסטוריה</div>
+  <div id="cf-close-reminder" hidden></div>
   <div class="card cf-history-card">
     <div class="card-header">
       <span class="card-title">סיכום חודשי ושנתי</span>
@@ -690,7 +700,7 @@ html.app-main #config-screen { display: none !important; }
         <button type="button" class="btn sm" onclick="om('cfclose')">חודש אחר…</button>
       </div>
     </div>
-    <p class="hint" style="margin:0 0 .85rem;padding:0 .15rem;line-height:1.5">סיכום שנסגר לכל חודש (תזרים + נדל״ן). בחר שנה וצפה ב-12 החודשים ובסיכום שנתי.</p>
+    <p class="hint" style="margin:0 0 .85rem;padding:0 .15rem;line-height:1.5">סגירה <strong>ידנית</strong> — שומרת סיכום לחודש שבחרת. הוצאות חד-פעמיות (וואטסאפ, נדל״ן, רכב) לפי תאריך באותו חודש; הוצאות קבועות לפי המצב הנוכחי במערכת.</p>
     <div id="cf-history-years"></div>
     <div id="cf-history-body"></div>
   </div>
@@ -917,6 +927,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=64"></script>
+<script src="app.js?v=65"></script>
 </body>
 </html>
