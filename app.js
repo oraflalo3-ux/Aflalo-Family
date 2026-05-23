@@ -2162,6 +2162,16 @@ async function fetchShoppingStaples() {
   return data || [];
 }
 
+function initShopStaplesPanel() {
+  const panel = document.getElementById('shop-staples-panel');
+  if (!panel || panel.dataset.ready) return;
+  panel.open = localStorage.getItem('bayit_shop_staples_open') === '1';
+  panel.addEventListener('toggle', () => {
+    localStorage.setItem('bayit_shop_staples_open', panel.open ? '1' : '0');
+  });
+  panel.dataset.ready = '1';
+}
+
 function initShopQuickBar() {
   const sel = document.getElementById('shop-quick-cat');
   if (sel && !sel.dataset.ready) {
@@ -2229,9 +2239,7 @@ function renderShopListHtml(items, hideDone, stapleNames) {
   let html = '';
   visible.forEach(s => {
     const fromStaple = isShopStapleItem(s.name, stapleNames);
-    const tag = fromStaple
-      ? '<span class="shop-tag-staple">קבוע</span>'
-      : '<span class="shop-tag-extra">חד-פעמי</span>';
+    const tag = fromStaple ? '' : '<span class="shop-tag-extra">חד-פעמי</span>';
     const cartWho = s.done && s.added_by ? `<span class="shop-in-cart">בעגלה · ${escHtml(s.added_by)}</span>` : '';
     html += `<div class="check-row shop-row" data-shop-id="${s.id}">
       <input type="checkbox" ${s.done ? 'checked' : ''} onchange="toggleDone('shopping','${s.id}',this.checked)">
@@ -2247,9 +2255,7 @@ function renderShopListHtml(items, hideDone, stapleNames) {
     html += `<details class="shop-done-collapsed" open><summary>בעגלה (${bought.length})</summary>`;
     bought.forEach(s => {
       const fromStaple = isShopStapleItem(s.name, stapleNames);
-      const tag = fromStaple
-        ? '<span class="shop-tag-staple">קבוע</span>'
-        : '<span class="shop-tag-extra">חד-פעמי</span>';
+      const tag = fromStaple ? '' : '<span class="shop-tag-extra">חד-פעמי</span>';
       const cartWho = s.added_by ? `<span class="shop-in-cart">${escHtml(s.added_by)}</span>` : '';
       html += `<div class="check-row shop-row" data-shop-id="${s.id}">
         <input type="checkbox" checked onchange="toggleDone('shopping','${s.id}',false)">
@@ -2285,6 +2291,7 @@ function renderStaplesListHtml(staples) {
 
 function renderShopSection(shopping, staples) {
   initShopQuickBar();
+  initShopStaplesPanel();
   const stapleNames = shopStapleNamesSet(staples);
   const hideDone = getShopHideDone();
   const done = shopping.filter(x => x.done).length;
@@ -2292,17 +2299,22 @@ function renderShopSection(shopping, staples) {
   const total = shopping.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
 
+  const prepBtn = shopStaplesAvailable
+    ? `<button type="button" class="btn sm primary" onclick="prepareShopTrip()">טען מקבועה</button>`
+    : '';
+  el('shop-trip-actions', `
+    ${prepBtn}
+    <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג בעגלה' : 'הסתר בעגלה'}</button>
+    ${done ? `<button type="button" class="btn sm" onclick="finishShopTrip()">סיימנו</button>` : ''}`);
+
   el('shop-progress', total ? `
     <div class="shop-progress">
       <div class="shop-progress-bar"><div class="shop-progress-fill" style="width:${pct}%"></div></div>
-      <div class="shop-progress-meta"><span>${done} בעגלה · ${todo} נשאר</span><span>${pct}%</span></div>
-    </div>` : '<p class="hint" style="margin-bottom:.5rem">טענו מקבועה או הוסיפו פריט חד-פעמי</p>');
+      <div class="shop-progress-meta">${done} בעגלה · ${todo} נשאר · ${pct}%</div>
+    </div>` : '');
 
-  el('shop-toolbar', `
-    <div class="shop-toolbar">
-      <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג בעגלה' : 'הסתר בעגלה'}</button>
-      ${done ? `<button type="button" class="btn sm" onclick="finishShopTrip()">סיימנו קנייה</button>` : ''}
-    </div>`);
+  const sum = document.getElementById('shop-staples-summary-text');
+  if (sum) sum.textContent = `📋 הרשימה הקבועה (${staples.length})`;
 
   el('shop-staples-list', renderStaplesListHtml(staples));
   el('shop-list', renderShopListHtml(shopping, hideDone, stapleNames));

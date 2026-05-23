@@ -346,26 +346,31 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 
 /* Shopping */
 .shop-card { margin-bottom: 1rem; }
-.shop-block { padding: .85rem 0; border-top: 0.5px solid var(--border); }
+.shop-block { padding: .5rem 0; border-top: 0.5px solid var(--border); }
 .shop-block:first-of-type { border-top: none; padding-top: 0; }
-.shop-block-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: .35rem; flex-wrap: wrap; }
+.shop-block-hdr { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: .35rem; flex-wrap: wrap; }
 .shop-block-title { font-size: 13px; font-weight: 600; }
-.shop-progress { margin-bottom: .75rem; }
-.shop-progress-bar { height: 8px; background: var(--bg3); border-radius: 99px; overflow: hidden; }
+.shop-trip-actions { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.shop-progress { margin-bottom: .4rem; }
+.shop-progress-bar { height: 4px; background: var(--bg3); border-radius: 99px; overflow: hidden; }
 .shop-progress-fill { height: 100%; background: var(--green-mid); border-radius: 99px; transition: width .25s ease; }
-.shop-progress-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 5px; }
-.shop-toolbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: .65rem; }
+.shop-progress-meta { font-size: 10px; color: var(--text2); margin-top: 3px; }
 .shop-row .check-text { flex: 1; min-width: 0; }
-.shop-extra-add { display: flex; gap: 6px; margin-bottom: .65rem; }
-.shop-extra-add input { flex: 1; min-width: 0; font-size: 14px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 10px 12px; background: var(--bg2); color: var(--text); font-family: var(--font); }
+.shop-extra-add { display: flex; gap: 6px; margin-bottom: .4rem; }
+.shop-extra-add input { flex: 1; min-width: 0; font-size: 13px; border: 0.5px solid var(--border2); border-radius: var(--radius); padding: 8px 10px; background: var(--bg2); color: var(--text); font-family: var(--font); }
 .shop-live-hint { font-size: 10px; color: var(--green); font-weight: 500; }
 .shop-in-cart { font-size: 10px; color: var(--text3); flex-shrink: 0; }
-.shop-staple-row { display: flex; align-items: center; gap: 6px; padding: 7px 0; border-bottom: 0.5px solid var(--border); font-size: 13px; }
+.shop-staple-row { display: flex; align-items: center; gap: 5px; padding: 4px 0; border-bottom: 0.5px solid var(--border); font-size: 12px; }
 .shop-staple-row:last-child { border-bottom: none; }
-.shop-done-collapsed { margin-top: .5rem; }
-.shop-done-collapsed summary { font-size: 12px; color: var(--text2); cursor: pointer; padding: 6px 0; }
-.shop-tag-staple { font-size: 10px; color: var(--blue); background: var(--blue-light); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
-.shop-tag-extra { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
+.shop-staples-panel { border-top: 0.5px solid var(--border); margin-top: .35rem; }
+.shop-staples-panel summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: .45rem 0; cursor: pointer; list-style: none; }
+.shop-staples-panel summary::-webkit-details-marker { display: none; }
+.shop-staples-summary-text { font-size: 12px; font-weight: 600; color: var(--text2); }
+.shop-staples-body { padding-bottom: .25rem; }
+.shop-done-collapsed { margin-top: .35rem; }
+.shop-done-collapsed summary { font-size: 11px; color: var(--text2); cursor: pointer; padding: 4px 0; }
+.shop-tag-extra { font-size: 10px; color: var(--text3); background: var(--bg3); padding: 1px 5px; border-radius: 4px; flex-shrink: 0; }
+.check-row.shop-row { padding: 5px 0; gap: 7px; }
 .check-text { font-size: 13px; flex: 1; }
 .check-text.done { text-decoration: line-through; color: var(--text3); }
 
@@ -641,29 +646,27 @@ html.app-main #config-screen { display: none !important; }
       <span class="card-title">🛒 רשימת סופר</span>
       <span id="shop-live-hint" class="shop-live-hint" hidden>מסתנכרן</span>
     </div>
-    <div class="shop-block shop-block-staples">
-      <div class="shop-block-hdr">
-        <span class="shop-block-title">📋 הרשימה הקבועה</span>
-        <button type="button" class="btn sm" onclick="om('staple')">+ הוסף</button>
-      </div>
-      <p class="hint" style="margin:0 0 .5rem">פריטים שחוזרים בכל קנייה — עריכה כאן, לא ברשימת הקנייה</p>
-      <div id="shop-staples-list"></div>
-    </div>
-
     <div class="shop-block shop-block-trip">
       <div class="shop-block-hdr">
         <span class="shop-block-title">🛒 לקנייה עכשיו</span>
-        <button type="button" class="btn sm primary" onclick="prepareShopTrip()">טען מקבועה</button>
+        <div id="shop-trip-actions" class="shop-trip-actions"></div>
       </div>
       <select id="shop-quick-cat" aria-label="קטגוריה" hidden></select>
       <div id="shop-progress"></div>
-      <div id="shop-toolbar"></div>
       <div class="shop-extra-add">
-        <input id="shop-quick-name" type="text" placeholder="הוסף פריט חד-פעמי לקנייה (Enter)" autocomplete="off">
+        <input id="shop-quick-name" type="text" placeholder="פריט חד-פעמי (Enter)" autocomplete="off">
         <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
       </div>
       <div id="shop-list"></div>
     </div>
+
+    <details id="shop-staples-panel" class="shop-staples-panel">
+      <summary>
+        <span id="shop-staples-summary-text" class="shop-staples-summary-text">📋 הרשימה הקבועה</span>
+        <button type="button" class="btn sm" onclick="event.preventDefault(); event.stopPropagation(); om('staple')">+ הוסף</button>
+      </summary>
+      <div id="shop-staples-list" class="shop-staples-body"></div>
+    </details>
   </div>
   <div class="sec">מ-WhatsApp</div>
   <div class="two">
@@ -822,6 +825,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=52"></script>
+<script src="app.js?v=53"></script>
 </body>
 </html>
