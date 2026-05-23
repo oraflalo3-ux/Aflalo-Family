@@ -1128,14 +1128,71 @@ async function fetchAssetExpenses() {
 async function upsertMonthlyAssetExpense(assetType, assetId, name, amount) {
   if (!sb || !assetExpensesTableOk) return;
   const amt = Number(amount) || 0;
-  const { data: rows } = await sb.from('asset_expenses').select('id')
-    .eq('asset_type', assetType).eq('asset_id', assetId).eq('name', name).eq('kind', 'monthly');
-  const existing = rows?.[0];
+  const label = (name || '').trim();
+  let existing = null;
+  if (label) {
+    const { data: byName } = await sb.from('asset_expenses').select('id')
+      .eq('asset_type', assetType).eq('asset_id', assetId).eq('kind', 'monthly').eq('name', label);
+    existing = byName?.[0];
+  }
+  if (!existing) {
+    const { data: rows } = await sb.from('asset_expenses').select('id')
+      .eq('asset_type', assetType).eq('asset_id', assetId).eq('kind', 'monthly');
+    if (rows?.length === 1) existing = rows[0];
+  }
   if (amt > 0) {
-    const row = { asset_type: assetType, asset_id: assetId, name, amount: amt, kind: 'monthly', expense_date: '', note: '' };
-    if (existing) await sb.from('asset_expenses').update({ amount: amt }).eq('id', existing.id);
+    const row = { asset_type: assetType, asset_id: assetId, name: label || 'הוצאה חודשית', amount: amt, kind: 'monthly', expense_date: '', note: '' };
+    if (existing) await sb.from('asset_expenses').update({ name: row.name, amount: amt }).eq('id', existing.id);
     else await sb.from('asset_expenses').insert(row);
   } else if (existing) await sb.from('asset_expenses').delete().eq('id', existing.id);
+}
+
+const CAR_LOAN_EXPENSE_PREFIX = 'הלוואה — ';
+
+function carLoanExpenseName(make, model) {
+  return `${CAR_LOAN_EXPENSE_PREFIX}${(make || '').trim()} ${(model || '').trim()}`.trim();
+}
+
+function readCarFormData() {
+  return {
+    make: gv('f1'),
+    model: gv('f2'),
+    year: +gv('f3') || 2020,
+    plate: gv('f4'),
+    odometer_km: parseInt(document.getElementById('f_km_car')?.value, 10) || 0,
+    value: +gv('f_value') || 0,
+    loan_balance: +gv('f_loan_bal') || 0,
+    loan_monthly: +gv('f_loan_monthly') || 0,
+    loan_note: gv('f_loan_note') || ''
+  };
+}
+
+async function persistCarRow(data, carId) {
+  const loanLabel = carLoanExpenseName(data.make, data.model);
+  const stripFinance = row => {
+    const { value, loan_balance, loan_monthly, loan_note, ...rest } = row;
+    return rest;
+  };
+  if (carId) {
+    let { error } = await sb.from('cars').update(data).eq('id', carId);
+    if (error && /column/i.test(error.message || '')) {
+      ({ error } = await sb.from('cars').update(stripFinance(data)).eq('id', carId));
+      if (!error) toast('הרץ cars-finance-migration.sql לשווי והלוואה');
+    }
+    if (error) throw error;
+    await upsertMonthlyAssetExpense('car', carId, loanLabel, data.loan_monthly);
+    return carId;
+  }
+  let { data: row, error } = await sb.from('cars').insert(data).select('id').single();
+  if (error && /column/i.test(error.message || '')) {
+    ({ data: row, error } = await sb.from('cars').insert(stripFinance(data)).select('id').single());
+    if (!error) toast('הרץ cars-finance-migration.sql לשווי והלוואה');
+  }
+  if (error) throw error;
+  if (row?.id && data.loan_monthly > 0) {
+    await upsertMonthlyAssetExpense('car', row.id, loanLabel, data.loan_monthly);
+  }
+  return row?.id;
 }
 
 function buildAexpFormHtml(kindPreset) {
@@ -1191,6 +1248,7 @@ function renderAssetExpensesPanel(assetType, assetId, assetExpenses) {
       </div>
       <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
         <span class="row-amount r">₪${fmt(e.amount)}</span>
+        <button type="button" class="btn sm" onclick="om('aexp_edit','${e.id}')" title="עריכה">✏️</button>
         <button type="button" class="btn icon-only" onclick="del('asset_expenses','${e.id}',true)">🗑</button>
       </div>
     </div>`).join('') : '<div class="empty">אין הוצאות מתועדות — הוסף למטה</div>';
@@ -1308,7 +1366,8 @@ function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpense
   const loanMonthly = sumCfLines(externalExpense.filter(l => (l.source === 'loans' || l.source === 'savings') && l.kind === 'monthly'));
   const propMonthly = sumCfLines(externalExpense.filter(l => l.source === 'realestate' && l.kind === 'monthly'));
   const propOnce = sumCfLines(externalExpense.filter(l => l.source === 'realestate' && l.kind === 'once'));
-  const carsOnce = sumCfLines(externalExpense.filter(l => l.source === 'cars'));
+  const carsMonthly = sumCfLines(externalExpense.filter(l => l.source === 'cars' && l.kind === 'monthly'));
+  const carsOnce = sumCfLines(externalExpense.filter(l => l.source === 'cars' && l.kind === 'once'));
   const activitiesMonthly = sumCfLines(externalExpense.filter(l => l.source === 'daily'));
   const whatsappOnce = sumCfLines(externalExpense.filter(l => l.source === 'whatsapp'));
   return {
@@ -1322,6 +1381,7 @@ function calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpense
     loanMonthly,
     propMonthly,
     propOnce,
+    carsMonthly,
     carsOnce,
     activitiesMonthly,
     whatsappOnce
@@ -1569,8 +1629,10 @@ async function renderOverview() {
   const reMort = props.reduce((a, p) => a + Number(p.mortgage || 0), 0);
   const loanTotal = loans.reduce((a, l) => a + Number(l.balance || 0), 0);
   const savLoanTotal = savLoans.reduce((a, l) => a + Number(l.balance || 0), 0);
-  const totalAssets = savTotal + reTotal;
-  const totalDebt = loanTotal + reMort + savLoanTotal;
+  const carLoanTotal = cars.reduce((a, c) => a + Number(c.loan_balance || 0), 0);
+  const carsValueTotal = cars.reduce((a, c) => a + Number(c.value || 0), 0);
+  const totalAssets = savTotal + reTotal + carsValueTotal;
+  const totalDebt = loanTotal + reMort + savLoanTotal + carLoanTotal;
   const netWorth = totalAssets - totalDebt;
 
   const cfTotals = calcCashflowTotals(cf, props, loans, savLoans, activities, assetExpenses, legacy, whatsappExpenses);
@@ -1581,7 +1643,7 @@ async function renderOverview() {
   const rentInc = sumCfLines(cfTotals.externalIncome);
   const fixedExp = cf.filter(c => c.type === 'expense' && isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
   const varExp = cf.filter(c => c.type === 'expense' && !isCfFixed(c)).reduce((a, b) => a + Number(b.amount), 0);
-  const { loanMonthly, propMonthly, propOnce, carsOnce, activitiesMonthly, whatsappOnce } = cfTotals;
+  const { loanMonthly, propMonthly, propOnce, carsMonthly, carsOnce, activitiesMonthly, whatsappOnce } = cfTotals;
   const monthLabel = getHebrewMonthYearLabel();
 
   el('ov-hero', `
@@ -1609,8 +1671,8 @@ async function renderOverview() {
   if (propMonthly > 0) {
     expMet.push(`<div class="met"><div class="ml">נדל״ן (חודשי)</div><div class="mv r">₪${fmt(propMonthly)}</div></div>`);
   }
-  if (loanMonthly > 0) {
-    expMet.push(`<div class="met"><div class="ml">החזרי הלוואות</div><div class="mv r">₪${fmt(loanMonthly)}</div></div>`);
+  if (loanMonthly + carsMonthly > 0) {
+    expMet.push(`<div class="met"><div class="ml">החזרי הלוואות</div><div class="mv r">₪${fmt(loanMonthly + carsMonthly)}</div></div>`);
   }
   if (propOnce > 0) {
     expMet.push(`<div class="met"><div class="ml">נדל״ן חד-פעמי (החודש)</div><div class="mv r">₪${fmt(propOnce)}</div></div>`);
@@ -1639,7 +1701,7 @@ async function renderOverview() {
   el('ov-details', `
     <div class="met"><div class="ml">שווי נטו</div><div class="mv ${netWorth >= 0 ? 'g' : 'r'}">₪${fmt(netWorth)}</div></div>
     <div class="met"><div class="ml">נכסים</div><div class="mv b">₪${fmt(totalAssets)}</div></div>
-    <div class="met"><div class="ml">חוב</div><div class="mv r">₪${fmt(totalDebt)}</div><div class="ms">הלוואות+משכנתאות+מינוף</div></div>
+    <div class="met"><div class="ml">חוב</div><div class="mv r">₪${fmt(totalDebt)}</div><div class="ms">הלוואות+משכנתאות+מינוף+רכב</div></div>
   `);
 
   // התראות — רק באיחור (לא "בקרוב")
@@ -1699,6 +1761,7 @@ function renderLoansListHtml(loans, assetExpenses) {
         <div><div class="row-name">${l.name}</div><div class="row-meta">${l.note || ''}</div></div>
         <div style="display:flex;align-items:center;gap:6px">
           <div style="text-align:left"><div class="row-amount r">₪${fmt(l.balance)}</div><div class="row-meta">יתרה</div></div>
+          <button type="button" class="btn sm" onclick="om('loan_edit','${l.id}')" title="עריכה">✏️</button>
           <button class="btn icon-only" onclick="del('loans','${l.id}',true)">🗑</button>
         </div>
       </div>
@@ -2065,9 +2128,13 @@ async function renderCars() {
     fetch_('cars'), fetch_('car_events', 'event_date'), fetchAssetExpenses(), fetchCarServiceLog()
   ]);
   const upcoming = events.filter(e => getDueDays(e.event_date) <= 45).length;
+  const totalValue = cars.reduce((a, c) => a + Number(c.value || 0), 0);
+  const totalLoan = cars.reduce((a, c) => a + Number(c.loan_balance || 0), 0);
 
   el('cars-summary', `
     <div class="met"><div class="ml">רכבים</div><div class="mv b">${cars.length}</div></div>
+    <div class="met"><div class="ml">שווי רכבים</div><div class="mv g">₪${fmt(totalValue)}</div></div>
+    <div class="met"><div class="ml">הלוואות רכב</div><div class="mv r">₪${fmt(totalLoan)}</div></div>
     <div class="met"><div class="ml">אירועים קרובים</div><div class="mv ${upcoming > 0 ? 'am' : 'g'}">${upcoming}</div><div class="ms">ב-45 יום</div></div>
   `);
 
@@ -2080,9 +2147,10 @@ async function renderCars() {
         <div class="block-icon" style="background:var(--blue-light)">${urgent ? '⚠️' : '🚗'}</div>
         <div style="flex:1">
           <div style="font-size:13px;font-weight:600">${car.make} ${car.model} (${car.year})</div>
-          <div class="row-meta">${car.plate}${car.odometer_km ? ` · ${fmt(car.odometer_km)} ק״מ` : ''}</div>
+          <div class="row-meta">${car.plate}${car.odometer_km ? ` · ${fmt(car.odometer_km)} ק״מ` : ''}${car.value ? ` · שווי ₪${fmt(car.value)}` : ''}${car.loan_balance ? ` · הלוואה ₪${fmt(car.loan_balance)}` : ''}${car.loan_monthly ? ` · ₪${fmt(car.loan_monthly)}/חודש` : ''}</div>
         </div>
         ${urgent ? '<span class="badge am">דורש טיפול</span>' : ''}
+        <button type="button" class="btn sm" onclick="event.stopPropagation(); om('car_edit','${car.id}')" title="עריכה">✏️</button>
         <span class="chev ${isOpen ? 'open' : ''}">▾</span>
       </div>
       <div id="carb_${car.id}" class="block-body ${isOpen ? 'open' : ''}">
@@ -2865,11 +2933,17 @@ const forms = {
   pexp: `<div class="fg"><label>תיאור</label><input id="f1" placeholder="שיפוץ, תיקון..."></div>
     <div class="fg"><label>סכום (₪)</label><input id="f2" type="number" placeholder="0"></div>
     <div class="fg"><label>תאריך</label><input id="f3" placeholder="06/2025"></div>`,
-  car: `<div class="fg"><label>יצרן</label><input id="f1" placeholder="טויוטה..."></div>
+  car: `<div class="modal-sec">פרטי רכב</div>
+    <div class="fg"><label>יצרן</label><input id="f1" placeholder="טויוטה..."></div>
     <div class="fg"><label>דגם</label><input id="f2" placeholder="קורולה..."></div>
     <div class="fg"><label>שנה</label><input id="f3" type="number" placeholder="2020"></div>
     <div class="fg"><label>רישוי</label><input id="f4" placeholder="12-345-67"></div>
-    <div class="fg"><label>ק״מ נוכחי (אופציונלי)</label><input id="f_km_car" type="number" min="0" placeholder="0"></div>`,
+    <div class="fg"><label>ק״מ נוכחי (אופציונלי)</label><input id="f_km_car" type="number" min="0" placeholder="0"></div>
+    <div class="modal-sec">כספים</div>
+    <div class="fg"><label>שווי רכב (₪)</label><input id="f_value" type="number" placeholder="0"></div>
+    <div class="fg"><label>יתרת הלוואה (₪)</label><input id="f_loan_bal" type="number" placeholder="0"></div>
+    <div class="fg"><label>החזר חודשי (₪)</label><input id="f_loan_monthly" type="number" placeholder="0"></div>
+    <div class="fg"><label>הערת הלוואה</label><input id="f_loan_note" placeholder="בנק, ריבית, תאריך סיום..."></div>`,
   cev: `<p class="hint" style="margin-bottom:.75rem">תזכורת לטיפול עתידי — בסגירה תתבקש תאריך ביצוע וק״מ (בטסט/טיפול)</p>
     <div class="fg"><label>סוג</label><select id="f1"><option>טסט</option><option>טיפול תקופתי</option><option>טיפול שמן</option><option>ביטוח</option><option>תיקון</option><option>אחר</option></select></div>
     <div class="fg"><label>תאריך יעד</label><input id="f2" type="date"></div>
@@ -2893,14 +2967,17 @@ const forms = {
   shop_item: `<div class="fg"><label>פריט</label><input id="f1" placeholder="12 עגבניות / חלב"></div>
     <div class="fg"><label>כמות</label><input id="f2" placeholder="1"></div>`
 };
-const titles = { loan: 'הלוואה חדשה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', car: 'רכב חדש', cev: 'תזכורת רכב (לטפל)', cev_edit: 'עריכת תזכורת רכב', cev_done: 'תיעוד ביצוע', shop_list: 'רשימת קניות חדשה', shop_item: 'הוסף פריט', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
+const titles = { loan: 'הלוואה חדשה', loan_edit: 'עדכון הלוואה', cc: 'כרטיס חדש', cf: 'פריט תזרים', cfclose: 'סגירת חודש להיסטוריה', scat: 'קטגוריה חדשה', scat_edit: 'עדכון קטגוריה', sacc: 'חשבון חדש', sacc_edit: 'עדכון חשבון', sstk: 'מניה/ETF', sstk_edit: 'עדכון מניה', sloan: 'הלוואה על נכס', sloan_edit: 'עדכון הלוואה', prop: 'נכס נדל"ן', prop_edit: 'עדכון נכס', pexp: 'הוצאה לנכס', aexp: 'הוצאה על נכס', aexp_edit: 'עריכת הוצאה', car: 'רכב חדש', car_edit: 'עדכון רכב', cev: 'תזכורת רכב (לטפל)', cev_edit: 'עריכת תזכורת רכב', cev_done: 'תיעוד ביצוע', shop_list: 'רשימת קניות חדשה', shop_item: 'הוסף פריט', act: 'חוג', task: 'משימה', rem: 'תזכורת', alert: 'התראה חדשה' };
 
 const MODAL_FORM_BASE = {
   prop_edit: 'prop',
   scat_edit: 'scat',
   sacc_edit: 'sacc',
   sstk_edit: 'sstk',
+  loan_edit: 'loan',
+  car_edit: 'car',
   sloan_edit: 'sloan',
+  aexp_edit: 'aexp',
   cev_edit: 'cev'
 };
 
@@ -2965,6 +3042,39 @@ async function loadModalForEdit(type, id) {
     setModalField('f5', l.note);
     return;
   }
+  if (type === 'loan_edit') {
+    const { data: l, error } = await sb.from('loans').select('*').eq('id', id).single();
+    if (error || !l) { fail(); return; }
+    setModalField('f1', l.name);
+    setModalField('f2', l.balance);
+    setModalField('f3', l.monthly);
+    setModalField('f4', l.note);
+    return;
+  }
+  if (type === 'car_edit') {
+    const { data: c, error } = await sb.from('cars').select('*').eq('id', id).single();
+    if (error || !c) { fail(); return; }
+    setModalField('f1', c.make);
+    setModalField('f2', c.model);
+    setModalField('f3', c.year);
+    setModalField('f4', c.plate);
+    setModalField('f_km_car', c.odometer_km);
+    setModalField('f_value', c.value);
+    setModalField('f_loan_bal', c.loan_balance);
+    setModalField('f_loan_monthly', c.loan_monthly);
+    setModalField('f_loan_note', c.loan_note);
+    return;
+  }
+  if (type === 'aexp_edit') {
+    const { data: e, error } = await sb.from('asset_expenses').select('*').eq('id', id).single();
+    if (error || !e) { fail(); return; }
+    setModalField('f1', e.name);
+    setModalField('f2', e.amount);
+    setModalField('f3', e.kind || 'once');
+    setModalField('f4', e.expense_date || '');
+    setModalField('f5', e.note || '');
+    return;
+  }
   if (type === 'cev_edit') {
     const { data: ev, error } = await sb.from('car_events').select('*').eq('id', id).single();
     if (error || !ev) { fail(); return; }
@@ -3014,7 +3124,7 @@ async function om(type, target) {
   document.getElementById('modal-body').innerHTML = type === 'cfclose'
     ? buildCfCloseForm()
     : (type === 'cf' ? buildCfFormHtml()
-      : type === 'aexp' ? buildAexpFormHtml(String(target || '').split(':')[2] || 'once')
+      : (type === 'aexp' || type === 'aexp_edit') ? buildAexpFormHtml(type === 'aexp_edit' ? 'monthly' : String(target || '').split(':')[2] || 'once')
       : (forms[formKey] || ''));
   document.getElementById('modal').classList.add('open');
   if (MODAL_FORM_BASE[type] && target) await loadModalForEdit(type, target);
@@ -3056,6 +3166,15 @@ async function saveModal() {
       }).select('id').single();
       if (error) throw error;
       if (monthly > 0) await upsertMonthlyAssetExpense('loan', row.id, gv('f1') || 'החזר חודשי', monthly);
+    }
+    else if (t === 'loan_edit') {
+      const monthly = +gv('f3') || 0;
+      const name = gv('f1');
+      const { error } = await sb.from('loans').update({
+        name, balance: +gv('f2') || 0, monthly, note: gv('f4')
+      }).eq('id', tgt);
+      if (error) throw error;
+      await upsertMonthlyAssetExpense('loan', tgt, name || 'החזר חודשי', monthly);
     }
     else if (t === 'cc') await sb.from('credit_cards').insert({ name: gv('f1'), credit_limit: +gv('f2') || 0, used: +gv('f3') || 0, cycle: gv('f4') });
     else if (t === 'cf') {
@@ -3179,11 +3298,24 @@ async function saveModal() {
         throw error;
       }
     }
-    else if (t === 'car') {
-      await sb.from('cars').insert({
-        make: gv('f1'), model: gv('f2'), year: +gv('f3') || 2020,
-        plate: gv('f4'), odometer_km: parseInt(document.getElementById('f_km_car')?.value, 10) || 0
-      });
+    else if (t === 'aexp_edit') {
+      const kind = gv('f3') || 'once';
+      const { error } = await sb.from('asset_expenses').update({
+        name: gv('f1'),
+        amount: +gv('f2') || 0,
+        kind,
+        expense_date: kind === 'once' ? (gv('f4') || '') : '',
+        note: gv('f5') || ''
+      }).eq('id', tgt);
+      if (error) {
+        toast(error.message?.includes('asset_expenses') ? 'הרץ asset-expenses-migration.sql' : 'שגיאה');
+        throw error;
+      }
+    }
+    else if (t === 'car' || t === 'car_edit') {
+      const data = readCarFormData();
+      if (t === 'car_edit') await persistCarRow(data, tgt);
+      else await persistCarRow(data);
     }
     else if (t === 'cev_done') {
       const ev = pendingCarEventComplete;
