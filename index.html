@@ -374,6 +374,86 @@ html.app-main, html.app-main body { height: 100%; overflow: hidden; overscroll-b
 .check-text { font-size: 13px; flex: 1; }
 .check-text.done { text-decoration: line-through; color: var(--text3); }
 
+/* Shop super mode */
+body.shop-super-lock { overflow: hidden; }
+.shop-super {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: var(--bg);
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.shop-super.open { display: flex; }
+.shop-super-hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: .65rem 1rem;
+  border-bottom: 0.5px solid var(--border);
+  flex-shrink: 0;
+}
+.shop-super-title { flex: 1; font-size: 16px; font-weight: 600; text-align: center; }
+.shop-super-count { font-size: 12px; color: var(--text2); min-width: 3rem; text-align: left; }
+.shop-super-progress { padding: .5rem 1rem .35rem; flex-shrink: 0; }
+.shop-super-progress .shop-progress-bar { height: 6px; }
+.shop-super-progress .shop-progress-meta { text-align: center; margin-top: 4px; }
+.shop-super-list {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: .25rem 1rem 1rem;
+}
+.shop-super-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 52px;
+  padding: .65rem .5rem;
+  margin-bottom: 2px;
+  border: none;
+  border-bottom: 0.5px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  text-align: right;
+  cursor: pointer;
+  border-radius: var(--radius);
+}
+.shop-super-row:active { background: var(--bg2); }
+.shop-super-row.done { opacity: .55; }
+.shop-super-row input[type=checkbox] {
+  width: 22px;
+  height: 22px;
+  accent-color: var(--green);
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.shop-super-name { flex: 1; font-size: 16px; font-weight: 500; min-width: 0; }
+.shop-super-row.done .shop-super-name { text-decoration: line-through; color: var(--text3); }
+.shop-super-qty {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text2);
+  background: var(--bg3);
+  padding: 4px 10px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+.shop-super-done { margin-top: .5rem; }
+.shop-super-done summary { font-size: 12px; color: var(--text2); cursor: pointer; padding: .5rem 0; }
+.shop-super-empty { text-align: center; color: var(--text2); padding: 2rem 1rem; font-size: 14px; }
+.shop-super-ftr {
+  padding: .65rem 1rem calc(.65rem + env(safe-area-inset-bottom));
+  border-top: 0.5px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  gap: 8px;
+}
+.shop-super-ftr .btn { flex: 1; padding: 12px; font-size: 14px; }
+
 /* Prop grid */
 .prop-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-bottom: .85rem; padding: .85rem 1rem; }
 .prop-stat { background: var(--bg3); border-radius: var(--radius); padding: .6rem .75rem; }
@@ -654,7 +734,7 @@ html.app-main #config-screen { display: none !important; }
       <select id="shop-quick-cat" aria-label="קטגוריה" hidden></select>
       <div id="shop-progress"></div>
       <div class="shop-extra-add">
-        <input id="shop-quick-name" type="text" placeholder="פריט חד-פעמי (Enter)" autocomplete="off">
+        <input id="shop-quick-name" type="text" placeholder="12 עגבניות / פריט (Enter)" autocomplete="off">
         <button type="button" class="btn primary sm" onclick="quickAddShop()">+</button>
       </div>
       <div id="shop-list"></div>
@@ -764,6 +844,17 @@ html.app-main #config-screen { display: none !important; }
 
 <div id="toast" class="toast"></div>
 
+<div id="shop-super" class="shop-super" aria-hidden="true">
+  <header class="shop-super-hdr">
+    <button type="button" class="btn sm shop-super-exit" onclick="closeShopSuperMode()">← יציאה</button>
+    <span class="shop-super-title">🛒 קנייה</span>
+    <span id="shop-super-count" class="shop-super-count"></span>
+  </header>
+  <div id="shop-super-progress" class="shop-super-progress"></div>
+  <div id="shop-super-list" class="shop-super-list"></div>
+  <footer id="shop-super-ftr" class="shop-super-ftr"></footer>
+</div>
+
 <script>
 /* גיבוי ל-Safari באייפון — עובד גם אם app.js לא נטען */
 window.saveConfigGo = function () {
@@ -825,6 +916,6 @@ window.saveConfigGo = function () {
   }
 };
 </script>
-<script src="app.js?v=53"></script>
+<script src="app.js?v=55"></script>
 </body>
 </html>

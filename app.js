@@ -2101,6 +2101,7 @@ let waRealtimeChannel = null;
 let waRefreshTimer = null;
 let expensesTableOk = true;
 let shopStaplesAvailable = true;
+let shopSuperModeActive = false;
 
 function getShopHideDone() {
   return localStorage.getItem('bayit_shop_hide_done') !== '0';
@@ -2129,6 +2130,33 @@ async function getShopAddedBy() {
   const session = await getSession();
   if (!session?.user?.email) return '';
   return session.user.email.split('@')[0];
+}
+
+function formatShopQty(v) {
+  const n = parseFloat(v);
+  if (!Number.isFinite(n) || n <= 0) return '1';
+  return Number.isInteger(n) ? String(n) : String(n);
+}
+
+function parseShopQuickInput(raw) {
+  const text = (raw || '').trim();
+  if (!text) return { name: '', qty: '1' };
+
+  let m = text.match(/^(\d+(?:\.\d+)?)\s*[x×X]\s*(.+)$/u);
+  if (m) return { name: m[2].trim(), qty: formatShopQty(m[1]) };
+
+  m = text.match(/^(.+?)\s*[x×X]\s*(\d+(?:\.\d+)?)$/u);
+  if (m) return { name: m[1].trim(), qty: formatShopQty(m[2]) };
+
+  m = text.match(/^(\d+(?:\.\d+)?)\s+(.+)$/u);
+  if (m && m[2].trim()) return { name: m[2].trim(), qty: formatShopQty(m[1]) };
+
+  m = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)$/u);
+  if (m && m[1].trim() && !/%$/.test(m[1].trim())) {
+    return { name: m[1].trim(), qty: formatShopQty(m[2]) };
+  }
+
+  return { name: text, qty: '1' };
 }
 
 async function insertShopRow(row) {
@@ -2207,10 +2235,102 @@ function teardownShopRealtime() {
 }
 
 async function refreshShoppingUI() {
-  if (!document.getElementById('page-daily')?.classList.contains('active')) return;
   const [shopping, staples] = await Promise.all([fetch_('shopping'), fetchShoppingStaples()]);
-  renderShopSection(shopping, staples);
+  if (document.getElementById('page-daily')?.classList.contains('active')) {
+    renderShopSection(shopping, staples);
+  }
+  if (shopSuperModeActive) renderShopSuperMode(shopping, staples);
 }
+
+function shopSuperRowHtml(s, stapleNames, done) {
+  const fromStaple = isShopStapleItem(s.name, stapleNames);
+  const tag = fromStaple ? '' : '<span class="shop-tag-extra">חד-פעמי</span>';
+  const next = done ? 'false' : 'true';
+  return `<button type="button" class="shop-super-row${done ? ' done' : ''}" onclick="superToggleItem('${s.id}',${next})">
+    <input type="checkbox" ${done ? 'checked' : ''} tabindex="-1" aria-hidden="true">
+    <span class="shop-super-name">${escHtml(s.name)}</span>
+    ${tag}
+    <span class="shop-super-qty">${escHtml(s.qty || '1')}</span>
+  </button>`;
+}
+
+function renderShopSuperListHtml(items, stapleNames) {
+  if (!items.length) {
+    return '<div class="shop-super-empty">אין פריטים ברשימה</div>';
+  }
+  const sorted = sortShopTripItems(items);
+  const active = sorted.filter(s => !s.done);
+  const bought = sorted.filter(s => s.done);
+  let html = active.map(s => shopSuperRowHtml(s, stapleNames, false)).join('');
+  if (bought.length) {
+    html += `<details class="shop-super-done"><summary>בעגלה (${bought.length})</summary>`;
+    html += bought.map(s => shopSuperRowHtml(s, stapleNames, true)).join('');
+    html += '</details>';
+  }
+  if (!active.length && bought.length) {
+    html = `<div class="shop-super-empty" style="padding:1rem 0 .5rem">✓ הכל בעגלה!</div>` + html;
+  }
+  return html;
+}
+
+function renderShopSuperMode(shopping, staples) {
+  const stapleNames = shopStapleNamesSet(staples);
+  const done = shopping.filter(x => x.done).length;
+  const todo = shopping.filter(x => !x.done).length;
+  const total = shopping.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  const countEl = document.getElementById('shop-super-count');
+  if (countEl) countEl.textContent = total ? `${done}/${total}` : '';
+
+  el('shop-super-progress', total ? `
+    <div class="shop-progress">
+      <div class="shop-progress-bar"><div class="shop-progress-fill" style="width:${pct}%"></div></div>
+      <div class="shop-progress-meta">${todo ? `${todo} נשאר` : 'הכל בעגלה!'} · ${pct}%</div>
+    </div>` : '');
+
+  el('shop-super-list', renderShopSuperListHtml(shopping, stapleNames));
+
+  el('shop-super-ftr', `
+    <button type="button" class="btn" onclick="closeShopSuperMode()">יציאה</button>
+    ${done ? `<button type="button" class="btn primary" onclick="finishShopTripFromSuper()">סיימנו קנייה</button>` : ''}`);
+}
+
+window.openShopSuperMode = async function () {
+  const shopping = await fetch_('shopping');
+  if (!shopping.length) {
+    toast('טענו מקבועה או הוסיפו פריטים קודם');
+    return;
+  }
+  const staples = await fetchShoppingStaples();
+  shopSuperModeActive = true;
+  const panel = document.getElementById('shop-super');
+  if (panel) {
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+  }
+  document.body.classList.add('shop-super-lock');
+  renderShopSuperMode(shopping, staples);
+};
+
+window.closeShopSuperMode = function () {
+  shopSuperModeActive = false;
+  const panel = document.getElementById('shop-super');
+  if (panel) {
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+  }
+  document.body.classList.remove('shop-super-lock');
+};
+
+window.superToggleItem = async function (id, val) {
+  await toggleDone('shopping', id, val === true || val === 'true');
+};
+
+window.finishShopTripFromSuper = async function () {
+  const ok = await finishShopTrip();
+  if (ok && shopSuperModeActive) closeShopSuperMode();
+};
 
 function buildShopFormHtml() {
   const opts = SHOP_CATS.map(c => `<option value="${c.id}">${c.label}</option>`).join('');
@@ -2304,6 +2424,7 @@ function renderShopSection(shopping, staples) {
     : '';
   el('shop-trip-actions', `
     ${prepBtn}
+    ${total ? `<button type="button" class="btn sm primary" onclick="openShopSuperMode()">📱 מצב סופר</button>` : ''}
     <button type="button" class="btn sm" onclick="toggleShopHideDone()">${hideDone ? 'הצג בעגלה' : 'הסתר בעגלה'}</button>
     ${done ? `<button type="button" class="btn sm" onclick="finishShopTrip()">סיימנו</button>` : ''}`);
 
@@ -2321,13 +2442,15 @@ function renderShopSection(shopping, staples) {
 }
 
 window.quickAddShop = async function () {
-  const name = gv('shop-quick-name');
+  const raw = gv('shop-quick-name');
+  if (!raw) return;
+  const { name, qty } = parseShopQuickInput(raw);
   if (!name) return;
-  const err = await insertShopRow({ name, qty: '1', category: 'other', done: false, added_by: '' });
+  const err = await insertShopRow({ name, qty, category: 'other', done: false, added_by: '' });
   if (err) { toast('שגיאה בהוספה'); console.error(err); return; }
   const inp = document.getElementById('shop-quick-name');
   if (inp) { inp.value = ''; inp.focus(); }
-  toast('✓ נוסף לקנייה');
+  toast(qty === '1' ? '✓ נוסף לקנייה' : `✓ נוסף — ${qty} × ${name}`);
   await refreshShoppingUI();
 };
 
@@ -2371,15 +2494,16 @@ function setShopHideDone(v) {
 }
 
 window.finishShopTrip = async function () {
-  if (!sb) return;
+  if (!sb) return false;
   const items = await fetch_('shopping');
   const doneIds = items.filter(i => i.done).map(i => i.id);
-  if (!doneIds.length) { toast('אין פריטים בעגלה'); return; }
-  if (!confirm(`לסיים קנייה ולהסיר ${doneIds.length} פריטים מהרשימה?\n(הרשימה הקבועה נשארת)`)) return;
+  if (!doneIds.length) { toast('אין פריטים בעגלה'); return false; }
+  if (!confirm(`לסיים קנייה ולהסיר ${doneIds.length} פריטים מהרשימה?\n(הרשימה הקבועה נשארת)`)) return false;
   const { error } = await sb.from('shopping').delete().in('id', doneIds);
-  if (error) { toast('שגיאה'); return; }
+  if (error) { toast('שגיאה'); return false; }
   toast('✓ סיימתם — לקנייה הבאה: «טען מקבועה»');
   await refreshShoppingUI();
+  return true;
 };
 
 function bindShopQuickInput() {
@@ -3270,6 +3394,9 @@ function bindUi() {
   bindCfgBtn('btn-save-config-skip', () => saveConfig(true));
   bindCfgBtn('btn-save-config-go', () => saveConfig(true));
   initShopQuickBar();
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && shopSuperModeActive) closeShopSuperMode();
+  });
   const logoutBtn = document.getElementById('btn-logout');
   if (logoutBtn && !logoutBtn.dataset.bound) {
     logoutBtn.dataset.bound = '1';
